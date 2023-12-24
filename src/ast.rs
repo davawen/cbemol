@@ -96,22 +96,16 @@ pub struct Block<'inp>(Vec<Ast<'inp>>, Option<BAst<'inp>>);
 pub enum UnaryOp {
     AddressOf,
     Deref,
-    Negate
+    Negate,
+    Not
 }
 
 #[derive(Debug, Clone)]
 pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Eq,
-    Ne,
-    Gt,
-    Ge,
-    Lt,
-    Le,
+    Add, Sub, Mul, Div, Mod,
+    BinAnd, BinOr, BinXor,
+    And, Or, Xor,
+    Eq, Ne, Gt, Ge, Lt, Le,
     Range,
     Pipe
 }
@@ -185,9 +179,14 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
         let atom = atom_with_block.clone().or(atom_without_block);
 
         expr.define(atom.pratt((
-            prefix(8, just(Token::Minus),     |r| Ast::UnaryExpr(UnaryOp::Negate, Box::new(r))),
-            prefix(8, just(Token::Ampersand), |r| Ast::UnaryExpr(UnaryOp::AddressOf, Box::new(r))),
-            prefix(8, just(Token::Star),      |r| Ast::UnaryExpr(UnaryOp::Deref, Box::new(r))),
+            prefix(9, just(Token::Minus),       |r| Ast::UnaryExpr(UnaryOp::Negate, Box::new(r))),
+            prefix(9, just(Token::Ampersand),   |r| Ast::UnaryExpr(UnaryOp::AddressOf, Box::new(r))),
+            prefix(9, just(Token::Star),        |r| Ast::UnaryExpr(UnaryOp::Deref, Box::new(r))),
+            prefix(9, just(Token::Exclamation), |r| Ast::UnaryExpr(UnaryOp::Not, Box::new(r))),
+
+            infix(left(8), just(Token::Ampersand), |l, r| Ast::BinExpr(Box::new(l), BinOp::And, Box::new(r))),
+            infix(left(8), just(Token::Pipe),      |l, r| Ast::BinExpr(Box::new(l), BinOp::Or, Box::new(r))),
+            infix(left(8), just(Token::Caret),     |l, r| Ast::BinExpr(Box::new(l), BinOp::Xor, Box::new(r))),
 
             infix(left(7), just(Token::Percent), |l, r| Ast::BinExpr(Box::new(l), BinOp::Mod, Box::new(r))),
 
@@ -207,6 +206,10 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
 
             infix(left(1), just(Token::Eq), |l, r| Ast::BinExpr(Box::new(l), BinOp::Eq, Box::new(r))),
             infix(left(1), just(Token::Ne), |l, r| Ast::BinExpr(Box::new(l), BinOp::Ne, Box::new(r))),
+
+            infix(left(0), just(Token::DoubleAmpersand), |l, r| Ast::BinExpr(Box::new(l), BinOp::BinAnd, Box::new(r))),
+            infix(left(0), just(Token::DoublePipe),      |l, r| Ast::BinExpr(Box::new(l), BinOp::BinOr, Box::new(r))),
+            infix(left(0), just(Token::DoubleCaret),     |l, r| Ast::BinExpr(Box::new(l), BinOp::BinXor, Box::new(r))),
         )));
 
         let lvalue = choice((
