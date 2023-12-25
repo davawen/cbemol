@@ -57,5 +57,7 @@ void main() {
     show_errs(input, "stdin", errs);
 
     let Some(parsed) = parsed else { return };
-    println!("{parsed:#?}");
+    for parsed in parsed {
+        println!("{parsed}");
+    }
 }

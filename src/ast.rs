@@ -1,3 +1,5 @@
+
+use chumsky::combinator;
 use chumsky::input::MapExtra;
 use chumsky::input::SpannedInput;
 use chumsky::prelude::*;
@@ -5,11 +7,7 @@ use chumsky::pratt::*;
 
 use crate::lexer::{Token, Keyword};
 
-pub type Spanned<T> = (T, SimpleSpan);
-
-fn spanned<'a, T, I: Input<'a>, E: extra::ParserExtra<'a, I>>(t: T, e: &mut MapExtra<'a, '_, I, E>) -> (T, I::Span) {
-    (t, e.span())
-}
+pub type Span = SimpleSpan;
 
 #[derive(Debug, Clone)]
 pub enum Type<'inp> {
@@ -26,59 +24,67 @@ pub enum Type<'inp> {
     Slice(Box<Type<'inp>>)
 }
 
-pub type SAst<'inp> = Spanned<Ast<'inp>>;
-pub type BAst<'inp> = Box<SAst<'inp>>;
+pub type BAst<'inp> = Box<Ast<'inp>>;
 
 #[derive(Debug, Clone)]
 pub enum Ast<'inp> {
-    Id(&'inp str),
-    Num(i32),
-    Literal(String),
-    UnaryExpr(UnaryOp, BAst<'inp>),
-    BinExpr(BAst<'inp>, BinOp, BAst<'inp>),
+    Id(&'inp str, Span),
+    Num(i32, Span),
+    Literal(String, Span),
+    UnaryExpr(UnaryOp, BAst<'inp>, Span),
+    BinExpr(BAst<'inp>, BinOp, BAst<'inp>, Span),
     Declare {
         var: &'inp str,
         ty: Type<'inp>,
-        value: Option<BAst<'inp>>
+        value: Option<BAst<'inp>>,
+        span: Span
     },
     Assign {
         var: LValue<'inp>,
-        value: BAst<'inp>
+        value: BAst<'inp>,
+        span: Span
     },
     IfExpr {
         cond: BAst<'inp>,
-        block: Block<'inp>
+        block: Block<'inp>,
+        span: Span
     },
-    LoopExpr(Block<'inp>),
+    LoopExpr(Block<'inp>, Span),
     ForExpr {
         decl: (Type<'inp>, &'inp str),
         it: BAst<'inp>,
-        body: Block<'inp>
+        body: Block<'inp>,
+        span: Span
     },
-    Break(Option<BAst<'inp>>),
-    Continue(Option<BAst<'inp>>),
-    Block(Block<'inp>),
+    Break(Option<BAst<'inp>>, Span),
+    Continue(Option<BAst<'inp>>, Span),
+    Block(Block<'inp>, Span),
     FuncCall {
         name: &'inp str,
-        args: Vec<(Option<&'inp str>, SAst<'inp>)>
+        args: Vec<(Option<&'inp str>, Ast<'inp>)>,
+        span: Span
     },
     FunctionDef {
         name: &'inp str,
         ret: Type<'inp>,
         params: Vec<Parameter<'inp>>,
-        body: Block<'inp>
+        body: Block<'inp>,
+        span: Span
     },
     StructDef {
         name: &'inp str,
-        fields: Vec<(Type<'inp>, &'inp str)>
+        fields: Vec<(Type<'inp>, &'inp str)>,
+        span: Span
     },
     EnumDef {
         name: &'inp str,
-        variants: Vec<(&'inp str, Option<i32>)>
+        variants: Vec<(&'inp str, Option<i32>)>,
+        span: Span
     },
     UnionDef {
         name: &'inp str,
-        variants: Vec<(Type<'inp>, &'inp str)>
+        variants: Vec<(Type<'inp>, &'inp str)>,
+        span: Span
     },
 }
 
@@ -88,7 +94,7 @@ pub struct Parameter<'inp> {
     outward_name: Option<&'inp str>,
     ty: Type<'inp>,
     name: &'inp str,
-    value: Option<SAst<'inp>>
+    value: Option<Ast<'inp>>
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +105,7 @@ pub enum LValue<'inp> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<'inp>(Vec<SAst<'inp>>, Option<BAst<'inp>>);
+pub struct Block<'inp>(Vec<Ast<'inp>>, Option<BAst<'inp>>);
 
 #[derive(Debug, Clone)]
 pub enum UnaryOp {
@@ -138,7 +144,21 @@ fn comma_list<'a, T, P: Parser<'a, TInput<'a>, T, Extra<'a>>+ Clone>(p: P) -> im
     p.separated_by(just(Token::Comma)).collect()
 }
 
-pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
+/// Horrible hack to allow taking a |input, span| -> output closure without creating a custom parser type
+trait ParserSpan<'a, I: Input<'a>, O, E: extra::ParserExtra<'a, I>>: Sized + Parser<'a, I, O, E> {
+    fn map_with_span<U, F: Clone + Fn(O, I::Span) -> U>(self, f: F) -> impl Parser<'a, I, U, E>;
+}
+
+impl<'a, I: Input<'a>, O, E: extra::ParserExtra<'a, I>, P: Parser<'a, I, O, E> + Clone> ParserSpan<'a, I, O, E> for P {
+    #[inline(always)]
+    fn map_with_span<U, F: Clone + Fn(O, I::Span) -> U>(self, f: F) -> impl Parser<'a, I, U, E> + Clone {
+        self
+            .map_with(|o, e| (o, e.span()))
+            .map(move |(o, span)| f(o, span))
+    }
+}
+
+pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
     let id = any().filter(|x| matches!(x, Token::Id(_))).map(|x| if let Token::Id(s) = x { s } else { unreachable!() });
     let num = any().filter(|x| matches!(x, Token::Num(_))).map(|x| if let Token::Num(n) = x { n } else { unreachable!() });
     let literal = any().filter(|x| matches!(x, Token::StrLiteral(_))).map(|x| if let Token::StrLiteral(s) = x { s } else { unreachable!() });
@@ -158,43 +178,44 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
             just(Keyword::If.token())
                 .ignore_then(expr.clone())
                 .then(block.clone())
-                .map(|(cond, block)| Ast::IfExpr { cond: Box::new(cond), block }),
+                .map_with_span(|(cond, block), span| Ast::IfExpr { cond: Box::new(cond), block, span }),
             just(Keyword::For.token())
                 .ignore_then(ty.clone().then(id))
                 .then_ignore(just(Keyword::In.token()))
                 .then(expr.clone())
                 .then(block.clone())
-                .map(|((decl, it), body)| Ast::ForExpr { decl, it: Box::new(it), body }),
+                .map_with_span(|((decl, it), body), span| Ast::ForExpr { decl, it: Box::new(it), body, span }),
             just(Keyword::Loop.token())
                 .ignore_then(block.clone())
-                .map(Ast::LoopExpr),
-            block.clone().map(Ast::Block)
-        )).map_with(spanned);
+                .map_with_span(Ast::LoopExpr),
+            block.clone().map_with_span(Ast::Block)
+        ));
 
         let func_call = id.then(in_parens(
             comma_list(id.then_ignore(just(Token::Equal)).or_not().then(expr.clone()))
         ))
-            .map(|(name, args)| Ast::FuncCall { name, args });
+            .map_with_span(|(name, args), span| Ast::FuncCall { name, args, span });
 
         let box_expr = expr.clone().map(Box::new);
 
         let atom_without_block = choice((
             func_call,
-            just(Keyword::Break.token()).ignore_then(box_expr.clone().or_not()).map(Ast::Break),
-            just(Keyword::Continue.token()).ignore_then(box_expr.clone().or_not()).map(Ast::Continue),
-            id.map(Ast::Id),
-            num.map(Ast::Num),
-            literal.map(Ast::Literal)
-        )).map_with(spanned).or(in_parens(expr.clone()));
+            just(Keyword::Break.token()).ignore_then(box_expr.clone().or_not()).map_with_span(Ast::Break),
+            just(Keyword::Continue.token()).ignore_then(box_expr.clone().or_not()).map_with_span(Ast::Continue),
+            id.map_with_span(Ast::Id),
+            num.map_with_span(Ast::Num),
+            literal.map_with_span(Ast::Literal),
+            in_parens(expr.clone())
+        ));
 
         let atom = atom_with_block.clone().or(atom_without_block);
 
         macro_rules! op {
             ($unary:ident, $value:expr, $span:expr) => {
-                (Ast::UnaryExpr(UnaryOp::$unary, Box::new($value)), $span)
+                Ast::UnaryExpr(UnaryOp::$unary, Box::new($value), $span)
             };
             ($a:expr, $binary:ident, $b: expr, $span:expr) => {
-                (Ast::BinExpr(Box::new($a), BinOp::$binary, Box::new($b)), $span)
+                Ast::BinExpr(Box::new($a), BinOp::$binary, Box::new($b), $span)
             }
         }
 
@@ -247,14 +268,12 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
                 .then(id)
                 .then(just(Token::Equal).ignore_then(box_expr.clone()).or_not())
                 .then_ignore(just(Token::Semicolon))
-                .map(|((ty, var), value)| Ast::Declare { ty, var, value })
-                .map_with(spanned),
+                .map_with_span(|((ty, var), value), span| Ast::Declare { ty, var, value, span }),
             lvalue
                 .then_ignore(just(Token::Equal))
                 .then(box_expr.clone())
                 .then_ignore(just(Token::Semicolon))
-                .map(|(var, value)| Ast::Assign { var, value })
-                .map_with(spanned),
+                .map_with_span(|(var, value), span| Ast::Assign { var, value, span }),
             expr.clone().then_ignore(just(Token::Semicolon)),
             atom_with_block.clone() // block exprs are allowed to be statements without a semicolon
         ));
@@ -276,7 +295,7 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
                 ty.clone().then(id).then_ignore(just(Token::Semicolon))
                     .repeated().collect()
             ))
-            .map(|(name, fields)| Ast::StructDef { name, fields });
+            .map_with_span(|(name, fields), span| Ast::StructDef { name, fields, span });
 
         let union_def = just(Keyword::Union.token())
             .ignore_then(id)
@@ -284,14 +303,14 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
                 ty.clone().then(id).then_ignore(just(Token::Semicolon))
                     .repeated().collect()
             ))
-            .map(|(name, variants)| Ast::UnionDef { name, variants });
+            .map_with_span(|(name, variants), span| Ast::UnionDef { name, variants, span });
 
         let enum_def = just(Keyword::Enum.token())
             .ignore_then(id)
             .then(in_braces(comma_list(
                 id.then(just(Token::Equal).ignore_then(num).or_not())
             )))
-            .map(|(name, variants)| Ast::EnumDef { name, variants });
+            .map_with_span(|(name, variants), span| Ast::EnumDef { name, variants, span });
 
         let function_def = ty.clone()
             .then(id)
@@ -303,10 +322,162 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
                     .map(|((outward_name, (ty, name)), value)| Parameter { outward_name, ty, name, value })
             )))
             .then(block)
-            .map(|(((ret, name), params), body)| Ast::FunctionDef { ret, name, params, body });
+            .map_with_span(|(((ret, name), params), body), span| Ast::FunctionDef { ret, name, params, body, span });
 
-        choice((struct_def, union_def, enum_def, function_def)).map_with(spanned)
+        choice((struct_def, union_def, enum_def, function_def))
     };
 
     definition.repeated().collect()
+}
+
+impl std::fmt::Display for Ast<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Ast as A;
+        match self {
+            A::Id(id, span) => write!(f, "{span} IDENT {id}"),
+            A::Num(n, span) => write!(f, "{span} NUM {n}"),
+            A::Literal(l, span) => write!(f, "{span} LITERAL {l:?}"),
+            A::UnaryExpr(op, e, span) => write!(f, "{span} OP {op} {e}"),
+            A::BinExpr(a, op, b, span) => write!(f, "{span} OP {op} {a} {b}"),
+            A::Declare { var, ty, value: Some(value), span } => write!(f, "{span} DECLARE {ty} {var} = {value}"),
+            A::Declare { var, ty, value: None, span } => write!(f, "{span} DECLARE {ty} {var}"),
+            A::Assign { var, value, span } => write!(f, "{span} ASSIGN {var} = {value}"),
+            A::IfExpr { cond, block, span } => write!(f, "{span} IF {cond} THEN {block}"),
+            A::LoopExpr(block, span) => write!(f, "{span} LOOP {block}"),
+            A::ForExpr { decl: (ty, name), it, body, span } => write!(f, "{span} FOR {ty} {name} IN {it}: {body}"),
+            A::Break(Some(e), span) => write!(f, "{span} BREAK {e}"),
+            A::Break(None, span) => write!(f, "{span} BREAK"),
+            A::Continue(Some(e), span) => write!(f, "{span} CONTINUE {e}"),
+            A::Continue(None, span) => write!(f, "{span} CONTINUE"),
+            A::Block(b, span) => write!(f, "{span} {b}"),
+            A::FuncCall { name, args, span } => {
+                write!(f, "{span} CALL {name} (")?;
+                for arg in args {
+                    if let (Some(arg), expr) = arg {
+                        write!(f, "{arg} = {expr}, ")?;
+                    } else {
+                        write!(f, "{}", arg.1)?;
+                    }
+                }
+                write!(f, ")")
+            }
+            A::FunctionDef { name, ret, params, body, span } => {
+                write!(f, "{span} DEFINE FUNC {ret} {name} (")?;
+                for param in params {
+                    write!(f, "{param}")?;
+                }
+                write!(f, "): {body}")
+            }
+            A::StructDef { name, fields, span } => {
+                write!(f, "{span} DEFINE STRUCT {name}: {{")?;
+                for (ty, name) in fields {
+                    write!(f, "  {ty} {name};")?;
+                }
+                write!(f, "}}")
+            }
+            A::EnumDef { name, variants, span } => {
+                writeln!(f, "{span} DEFINE ENUM {name}: {{")?;
+                for (name, _) in variants {
+                    writeln!(f, "  {name};")?;
+                }
+                write!(f, "}}")
+            }
+            A::UnionDef { name, variants, span } => {
+                writeln!(f, "{span} DEFINE UNION {name}: {{")?;
+                for (ty, name) in variants {
+                    writeln!(f, "  {ty} {name};")?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Parameter<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = self.outward_name {
+            write!(f, "{name}: ")?;
+        }
+        write!(f, "{} {}", self.ty, self.name)?;
+        if let Some(value) = &self.value {
+            write!(f, " = {value}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Block<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+        let mut s = String::new();
+        for statement in &self.0 {
+            writeln!(s, "{statement};")?;
+        }
+
+        if let Some(expr) = &self.1 {
+            writeln!(s, "{expr}")?;
+        }
+
+        writeln!(f, "{{")?;
+        for line in s.lines() {
+            writeln!(f, "  {line}")?;
+        }
+        writeln!(f, "}}")
+    }
+}
+
+impl std::fmt::Display for Type<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Type as T;
+        match self {
+            T::Id(id) => write!(f, "{id}"),
+            T::Pointer(ty) => write!(f, "{ty}&"),
+            T::FunctionPointer { ret, args } => {
+                write!(f, "{ret}(");
+                for arg in args {
+                    write!(f, "{arg}, ");
+                }
+                write!(f, ")")
+            }
+            T::Array { ty, len } => write!(f, "{ty}[{len}]"),
+            T::Slice(ty) => write!(f, "{ty}[]")
+        }
+    }
+}
+
+impl std::fmt::Display for LValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use LValue as L;
+        match self {
+            L::Id(id) => write!(f, "{id}"),
+            L::Deref(l) => write!(f, "*{l}"),
+            L::Index(l, i) => write!(f, "{l}[{i}]")
+        }
+    }
+}
+
+impl std::fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use UnaryOp as O;
+        let s = match self {
+            O::Not => "!", O::Deref => "*",
+            O::Negate => "-", O::AddressOf => "&"
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::fmt::Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use BinOp as O;
+        let s = match self {
+            O::Add => "+", O::Sub => "-", O::Mul => "*", O::Div => "/", O::Mod => "%",
+            O::BinAnd => "&&", O::BinOr => "||", O::BinXor => "^^",
+            O::And => "&", O::Or => "|", O::Xor => "^",
+            O::Eq => "==", O::Ne => "!=", O::Gt => ">", O::Ge => ">=", O::Lt => "<", O::Le => "<=",
+            O::Range => "..",
+            O::Pipe => "|>"
+        };
+        write!(f, "{s}")
+    }
 }
