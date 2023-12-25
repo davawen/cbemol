@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 ariadne = "0.3.0"
 chumsky = { version = "1.0.0-alpha.6", features = ["pratt"] }
+slotmap = "1.0.7"

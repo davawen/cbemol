@@ -1,8 +1,15 @@
+use chumsky::input::MapExtra;
 use chumsky::input::SpannedInput;
 use chumsky::prelude::*;
 use chumsky::pratt::*;
 
 use crate::lexer::{Token, Keyword};
+
+pub type Spanned<T> = (T, SimpleSpan);
+
+fn spanned<'a, T, I: Input<'a>, E: extra::ParserExtra<'a, I>>(t: T, e: &mut MapExtra<'a, '_, I, E>) -> (T, I::Span) {
+    (t, e.span())
+}
 
 #[derive(Debug, Clone)]
 pub enum Type<'inp> {
@@ -19,7 +26,9 @@ pub enum Type<'inp> {
     Slice(Box<Type<'inp>>)
 }
 
-pub type BAst<'inp> = Box<Ast<'inp>>;
+pub type SAst<'inp> = Spanned<Ast<'inp>>;
+pub type BAst<'inp> = Box<SAst<'inp>>;
+
 #[derive(Debug, Clone)]
 pub enum Ast<'inp> {
     Id(&'inp str),
@@ -51,7 +60,7 @@ pub enum Ast<'inp> {
     Block(Block<'inp>),
     FuncCall {
         name: &'inp str,
-        args: Vec<(Option<&'inp str>, Ast<'inp>)>
+        args: Vec<(Option<&'inp str>, SAst<'inp>)>
     },
     FunctionDef {
         name: &'inp str,
@@ -79,7 +88,7 @@ pub struct Parameter<'inp> {
     outward_name: Option<&'inp str>,
     ty: Type<'inp>,
     name: &'inp str,
-    value: Option<Ast<'inp>>
+    value: Option<SAst<'inp>>
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +99,7 @@ pub enum LValue<'inp> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<'inp>(Vec<Ast<'inp>>, Option<BAst<'inp>>);
+pub struct Block<'inp>(Vec<SAst<'inp>>, Option<BAst<'inp>>);
 
 #[derive(Debug, Clone)]
 pub enum UnaryOp {
@@ -110,26 +119,26 @@ pub enum BinOp {
     Pipe
 }
 
-type Input<'a> = SpannedInput<Token<'a>, SimpleSpan, &'a [(Token<'a>, SimpleSpan)]>;
+type TInput<'a> = SpannedInput<Token<'a>, SimpleSpan, &'a [(Token<'a>, SimpleSpan)]>;
 type Extra<'a> = chumsky::extra::Err<Rich<'a, Token<'a>>>;
 
-fn in_parens<'a, T, P: Parser<'a, Input<'a>, T, Extra<'a>> + Clone>(p: P) -> impl Parser<'a, Input<'a>, T, Extra<'a>> + Clone {
+fn in_parens<'a, T, P: Parser<'a, TInput<'a>, T, Extra<'a>> + Clone>(p: P) -> impl Parser<'a, TInput<'a>, T, Extra<'a>> + Clone {
     p.delimited_by(just(Token::LParen), just(Token::RParen))
 }
 
-fn in_braces<'a, T, P: Parser<'a, Input<'a>, T, Extra<'a>> + Clone>(p: P) -> impl Parser<'a, Input<'a>, T, Extra<'a>> + Clone {
+fn in_braces<'a, T, P: Parser<'a, TInput<'a>, T, Extra<'a>> + Clone>(p: P) -> impl Parser<'a, TInput<'a>, T, Extra<'a>> + Clone {
     p.delimited_by(just(Token::LBrace), just(Token::RBrace))
 }
 
-fn in_brackets<'a, T, P: Parser<'a, Input<'a>, T, Extra<'a>> + Clone>(p: P) -> impl Parser<'a, Input<'a>, T, Extra<'a>> + Clone {
+fn in_brackets<'a, T, P: Parser<'a, TInput<'a>, T, Extra<'a>> + Clone>(p: P) -> impl Parser<'a, TInput<'a>, T, Extra<'a>> + Clone {
     p.delimited_by(just(Token::LBracket), just(Token::RBracket))
 }
 
-fn comma_list<'a, T, P: Parser<'a, Input<'a>, T, Extra<'a>>+ Clone>(p: P) -> impl Parser<'a, Input<'a>, Vec<T>, Extra<'a>> + Clone {
+fn comma_list<'a, T, P: Parser<'a, TInput<'a>, T, Extra<'a>>+ Clone>(p: P) -> impl Parser<'a, TInput<'a>, Vec<T>, Extra<'a>> + Clone {
     p.separated_by(just(Token::Comma)).collect()
 }
 
-pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
+pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<SAst<'a>>, Extra<'a>> {
     let id = any().filter(|x| matches!(x, Token::Id(_))).map(|x| if let Token::Id(s) = x { s } else { unreachable!() });
     let num = any().filter(|x| matches!(x, Token::Num(_))).map(|x| if let Token::Num(n) = x { n } else { unreachable!() });
     let literal = any().filter(|x| matches!(x, Token::StrLiteral(_))).map(|x| if let Token::StrLiteral(s) = x { s } else { unreachable!() });
@@ -160,11 +169,12 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
                 .ignore_then(block.clone())
                 .map(Ast::LoopExpr),
             block.clone().map(Ast::Block)
-        ));
+        )).map_with(spanned);
 
         let func_call = id.then(in_parens(
             comma_list(id.then_ignore(just(Token::Equal)).or_not().then(expr.clone()))
-        )).map(|(name, args)| Ast::FuncCall { name, args });
+        ))
+            .map(|(name, args)| Ast::FuncCall { name, args });
 
         let box_expr = expr.clone().map(Box::new);
 
@@ -174,44 +184,52 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
             just(Keyword::Continue.token()).ignore_then(box_expr.clone().or_not()).map(Ast::Continue),
             id.map(Ast::Id),
             num.map(Ast::Num),
-            literal.map(Ast::Literal),
-            in_parens(expr.clone()),
-        ));
+            literal.map(Ast::Literal)
+        )).map_with(spanned).or(in_parens(expr.clone()));
 
         let atom = atom_with_block.clone().or(atom_without_block);
 
+        macro_rules! op {
+            ($unary:ident, $value:expr, $span:expr) => {
+                (Ast::UnaryExpr(UnaryOp::$unary, Box::new($value)), $span)
+            };
+            ($a:expr, $binary:ident, $b: expr, $span:expr) => {
+                (Ast::BinExpr(Box::new($a), BinOp::$binary, Box::new($b)), $span)
+            }
+        }
+
         expr.define(atom.pratt((
-            prefix(9, just(Token::Minus),       |r| Ast::UnaryExpr(UnaryOp::Negate, Box::new(r))),
-            prefix(9, just(Token::Ampersand),   |r| Ast::UnaryExpr(UnaryOp::AddressOf, Box::new(r))),
-            prefix(9, just(Token::Star),        |r| Ast::UnaryExpr(UnaryOp::Deref, Box::new(r))),
-            prefix(9, just(Token::Exclamation), |r| Ast::UnaryExpr(UnaryOp::Not, Box::new(r))),
+            prefix(9, just(Token::Minus),       |_, r, s| op!(Negate, r, s)),
+            prefix(9, just(Token::Ampersand),   |_, r, s| op!(AddressOf, r, s)),
+            prefix(9, just(Token::Star),        |_, r, s| op!(Deref, r, s)),
+            prefix(9, just(Token::Exclamation), |_, r, s| op!(Not, r, s)),
 
-            infix(left(8), just(Token::Ampersand), |l, r| Ast::BinExpr(Box::new(l), BinOp::And, Box::new(r))),
-            infix(left(8), just(Token::Pipe),      |l, r| Ast::BinExpr(Box::new(l), BinOp::Or, Box::new(r))),
-            infix(left(8), just(Token::Caret),     |l, r| Ast::BinExpr(Box::new(l), BinOp::Xor, Box::new(r))),
+            infix(left(8), just(Token::Ampersand), |l, _, r, s| op!(l, And, r, s)),
+            infix(left(8), just(Token::Pipe),      |l, _, r, s| op!(l, Or, r, s)),
+            infix(left(8), just(Token::Caret),     |l, _, r, s| op!(l, Xor, r, s)),
 
-            infix(left(7), just(Token::Percent), |l, r| Ast::BinExpr(Box::new(l), BinOp::Mod, Box::new(r))),
+            infix(left(7), just(Token::Percent), |l, _, r, s| op!(l, Mod, r, s)),
 
-            infix(left(6), just(Token::Star),  |l, r| Ast::BinExpr(Box::new(l), BinOp::Mul, Box::new(r))),
-            infix(left(6), just(Token::Slash), |l, r| Ast::BinExpr(Box::new(l), BinOp::Div, Box::new(r))),
-            infix(left(5), just(Token::Plus),  |l, r| Ast::BinExpr(Box::new(l), BinOp::Add, Box::new(r))),
-            infix(left(5), just(Token::Minus), |l, r| Ast::BinExpr(Box::new(l), BinOp::Sub, Box::new(r))),
+            infix(left(6), just(Token::Star),  |l, _, r, s| op!(l, Mul, r, s)),
+            infix(left(6), just(Token::Slash), |l, _, r, s| op!(l, Div, r, s)),
+            infix(left(5), just(Token::Plus),  |l, _, r, s| op!(l, Add, r, s)),
+            infix(left(5), just(Token::Minus), |l, _, r, s| op!(l, Sub, r, s)),
 
-            infix(left(4), just(Token::DotDot), |l, r| Ast::BinExpr(Box::new(l), BinOp::Range, Box::new(r))),
+            infix(left(4), just(Token::DotDot), |l, _, r, s| op!(l, Range, r, s)),
 
-            infix(left(3), just(Token::Pipeline), |l, r| Ast::BinExpr(Box::new(l), BinOp::Pipe, Box::new(r))),
+            infix(left(3), just(Token::Pipeline), |l, _, r, s| op!(l, Pipe, r, s)),
 
-            infix(left(2), just(Token::Gt), |l, r| Ast::BinExpr(Box::new(l), BinOp::Gt, Box::new(r))),
-            infix(left(2), just(Token::Ge), |l, r| Ast::BinExpr(Box::new(l), BinOp::Ge, Box::new(r))),
-            infix(left(2), just(Token::Lt), |l, r| Ast::BinExpr(Box::new(l), BinOp::Lt, Box::new(r))),
-            infix(left(2), just(Token::Le), |l, r| Ast::BinExpr(Box::new(l), BinOp::Le, Box::new(r))),
+            infix(left(2), just(Token::Gt), |l, _, r, s| op!(l, Gt, r, s)),
+            infix(left(2), just(Token::Ge), |l, _, r, s| op!(l, Ge, r, s)),
+            infix(left(2), just(Token::Lt), |l, _, r, s| op!(l, Lt, r, s)),
+            infix(left(2), just(Token::Le), |l, _, r, s| op!(l, Le, r, s)),
 
-            infix(left(1), just(Token::Eq), |l, r| Ast::BinExpr(Box::new(l), BinOp::Eq, Box::new(r))),
-            infix(left(1), just(Token::Ne), |l, r| Ast::BinExpr(Box::new(l), BinOp::Ne, Box::new(r))),
+            infix(left(1), just(Token::Eq), |l, _, r, s| op!(l, Eq, r, s)),
+            infix(left(1), just(Token::Ne), |l, _, r, s| op!(l, Ne, r, s)),
 
-            infix(left(0), just(Token::DoubleAmpersand), |l, r| Ast::BinExpr(Box::new(l), BinOp::BinAnd, Box::new(r))),
-            infix(left(0), just(Token::DoublePipe),      |l, r| Ast::BinExpr(Box::new(l), BinOp::BinOr, Box::new(r))),
-            infix(left(0), just(Token::DoubleCaret),     |l, r| Ast::BinExpr(Box::new(l), BinOp::BinXor, Box::new(r))),
+            infix(left(0), just(Token::DoubleAmpersand), |l, _, r, s| op!(l, BinAnd, r, s)),
+            infix(left(0), just(Token::DoublePipe),      |l, _, r, s| op!(l, BinOr, r, s)),
+            infix(left(0), just(Token::DoubleCaret),     |l, _, r, s| op!(l, BinXor, r, s)),
         )));
 
         let lvalue = choice((
@@ -229,12 +247,14 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
                 .then(id)
                 .then(just(Token::Equal).ignore_then(box_expr.clone()).or_not())
                 .then_ignore(just(Token::Semicolon))
-                .map(|((ty, var), value)| Ast::Declare { ty, var, value }),
+                .map(|((ty, var), value)| Ast::Declare { ty, var, value })
+                .map_with(spanned),
             lvalue
                 .then_ignore(just(Token::Equal))
                 .then(box_expr.clone())
                 .then_ignore(just(Token::Semicolon))
-                .map(|(var, value)| Ast::Assign { var, value }),
+                .map(|(var, value)| Ast::Assign { var, value })
+                .map_with(spanned),
             expr.clone().then_ignore(just(Token::Semicolon)),
             atom_with_block.clone() // block exprs are allowed to be statements without a semicolon
         ));
@@ -244,7 +264,8 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
                 atom_with_block.then(just(Token::RBrace)).not().rewind() // however, this makes sure that a block expression at the end of a block will be counted as the end expr
                     .ignore_then(statement)
                     .repeated().collect().then(box_expr.or_not())
-            ).map(|(statements, expr)| Block(statements, expr))
+            )
+                .map(|(statements, expr)| Block(statements, expr))
         );
     }
 
@@ -284,7 +305,7 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
             .then(block)
             .map(|(((ret, name), params), body)| Ast::FunctionDef { ret, name, params, body });
 
-        choice((struct_def, union_def, enum_def, function_def))
+        choice((struct_def, union_def, enum_def, function_def)).map_with(spanned)
     };
 
     definition.repeated().collect()

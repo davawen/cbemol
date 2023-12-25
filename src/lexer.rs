@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use chumsky::{prelude::*, util::MaybeRef};
+use chumsky::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token<'a> {
