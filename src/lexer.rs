@@ -138,21 +138,24 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token<'a>, SimpleSpan)>, ext
         .try_map(|i: &str, span: SimpleSpan| { // escape codes
             let mut s = String::with_capacity(i.len());
             let mut chars = i.char_indices();
+            chars.next(); // ignore starting quote
             while let Some((idx_a, c)) = chars.next() {
                 match c {
                     '\\' => if let Some((idx_b, c)) = chars.next() {
                         match c {
                             'n' => s.push('\n'),
+                            '"' => s.push('"'),
                             c => Err(<Rich<char> as chumsky::error::Error<&str>>::expected_found(
-                                [Some(MaybeRef::Val('n'))],
-                                Some(MaybeRef::Val(c)),
-                                SimpleSpan::new(span.start + idx_a, span.start + idx_b)
+                                [Some('n'.into()), Some('"'.into())],
+                                Some(c.into()),
+                                SimpleSpan::new(span.start + idx_a, span.start + idx_b + 1)
                             ))?
                         }
                     } else {
                         let e = Rich::custom(SimpleSpan::new(span.start + idx_a, span.end + idx_a + 1), "expected escape code, found end of string");
                         Err(e)? 
-                    },
+                    }
+                    '"' => (), // string done
                     c => s.push(c)
                 }
             }

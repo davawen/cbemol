@@ -24,6 +24,7 @@ pub type BAst<'inp> = Box<Ast<'inp>>;
 pub enum Ast<'inp> {
     Id(&'inp str),
     Num(i32),
+    Literal(String),
     UnaryExpr(UnaryOp, BAst<'inp>),
     BinExpr(BAst<'inp>, BinOp, BAst<'inp>),
     Declare {
@@ -131,6 +132,7 @@ fn comma_list<'a, T, P: Parser<'a, Input<'a>, T, Extra<'a>>+ Clone>(p: P) -> imp
 pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
     let id = any().filter(|x| matches!(x, Token::Id(_))).map(|x| if let Token::Id(s) = x { s } else { unreachable!() });
     let num = any().filter(|x| matches!(x, Token::Num(_))).map(|x| if let Token::Num(n) = x { n } else { unreachable!() });
+    let literal = any().filter(|x| matches!(x, Token::StrLiteral(_))).map(|x| if let Token::StrLiteral(s) = x { s } else { unreachable!() });
 
     let ty = recursive(|ty| id.map(Type::Id).pratt((
         postfix(3, just(Token::Ampersand), |ty| Type::Pointer(Box::new(ty))),
@@ -172,6 +174,7 @@ pub fn parser<'a>() -> impl Parser<'a, Input<'a>, Vec<Ast<'a>>, Extra<'a>> {
             just(Keyword::Continue.token()).ignore_then(box_expr.clone().or_not()).map(Ast::Continue),
             id.map(Ast::Id),
             num.map(Ast::Num),
+            literal.map(Ast::Literal),
             in_parens(expr.clone()),
         ));
 

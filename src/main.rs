@@ -39,7 +39,7 @@ void main() {
     loop {
         if i >= 5 { break }
 
-        printf("message!");
+        printf("\"message!\"\n");
 
         i = i + 1;
     }
