@@ -1,12 +1,13 @@
 use std::fmt::Display;
 
-use chumsky::prelude::*;
+use chumsky::{prelude::*, util::MaybeRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token<'a> {
     Id(&'a str),
     Num(i32),
     Keyword(Keyword),
+    StrLiteral(String),
     Ampersand,
     Pipe,
     Caret,
@@ -52,6 +53,7 @@ impl Display for Token<'_> {
             T::Id(s)           => write!(f, "{s}"),
             T::Num(n)          => write!(f, "{n}"),
             T::Keyword(k)      => write!(f, "{k:?}"),
+            T::StrLiteral(s)   => write!(f, "{s:?}"),
             T::Ampersand       => write!(f, "&"),
             T::Pipe            => write!(f, "|"),
             T::Caret           => write!(f, "^"),
@@ -129,13 +131,41 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token<'a>, SimpleSpan)>, ext
         just("{").to(Token::LBrace), just("}").to(Token::RBrace),
     ]);
 
-    // let comment = just("//").then(none_of("\n\r").repeated()).padded();
+    let literal = just('"')
+        .ignore_then(just('\\').ignore_then(any()).or(none_of('"')).repeated())
+        .then_ignore(just('"'))
+        .to_slice()
+        .try_map(|i: &str, span: SimpleSpan| { // escape codes
+            let mut s = String::with_capacity(i.len());
+            let mut chars = i.char_indices();
+            while let Some((idx_a, c)) = chars.next() {
+                match c {
+                    '\\' => if let Some((idx_b, c)) = chars.next() {
+                        match c {
+                            'n' => s.push('\n'),
+                            c => Err(<Rich<char> as chumsky::error::Error<&str>>::expected_found(
+                                [Some(MaybeRef::Val('n'))],
+                                Some(MaybeRef::Val(c)),
+                                SimpleSpan::new(span.start + idx_a, span.start + idx_b)
+                            ))?
+                        }
+                    } else {
+                        let e = Rich::custom(SimpleSpan::new(span.start + idx_a, span.end + idx_a + 1), "expected escape code, found end of string");
+                        Err(e)? 
+                    },
+                    c => s.push(c)
+                }
+            }
+            Ok(s)
+        })
+        .map(Token::StrLiteral);
 
-    let token = ident.or(num).or(symbol);
+    let token = literal.or(ident).or(num).or(symbol);
 
+    let comment = just("//").then(none_of("\n\r").repeated()).padded().or_not();
     token
         .map_with(|t, e| (t, e.span()))
-        // .padded_by(comment)
+        .padded_by(comment)
         .padded()
         .repeated().collect()
         .then_ignore(end())

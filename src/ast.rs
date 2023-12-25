@@ -17,7 +17,6 @@ pub enum Type<'inp> {
         len: i32
     },
     Slice(Box<Type<'inp>>)
-    
 }
 
 pub type BAst<'inp> = Box<Ast<'inp>>;

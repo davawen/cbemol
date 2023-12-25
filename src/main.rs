@@ -7,6 +7,7 @@ use lexer::lexer;
 
 mod lexer;
 mod ast;
+mod ir;
 
 fn show_errs<T: Clone + Display>(src: &str, filename: &str, errs: Vec<Rich<T>>) {
     let mut cache = (filename, src.into());
@@ -29,47 +30,29 @@ fn show_errs<T: Clone + Display>(src: &str, filename: &str, errs: Vec<Rich<T>>) 
 
 fn main() {
     let input = r#"
-struct Piece {
-    i32 x;
-    i32 y;
-    PieceValue value;
-}
-
-enum PieceValue {
-    Pawn = 1,
-    Bishop = 2,
-    Rook = 4,
-    Queen = 8,
-    King = 16
-}
-
-void imgui_sdjk(char[] msg, before: char[] prefix, x: int posx = 0, y: int posy = 0) {
-
+void printf(char[] msg) { 
+    // ...
 }
 
 void main() {
-    Piece[64] board;
-
     int i = 0;
     loop {
-        if i >= 64 { break }
-        
-        board[i] = Piece(x = i % 8, y = i / 8, value = Pawn);
+        if i >= 5 { break }
+
+        printf("message!");
 
         i = i + 1;
-    }
-
-    if i == 64 {
-        print(great)
     }
 }
     "#;
 
+    println!("lexing");
     let (lexed, errs) = lexer().parse(input).into_output_errors();
     show_errs(input, "stdin", errs);
 
     let Some(lexed) = lexed else { return };
 
+    println!("parsing");
     let (parsed, errs) = parser().parse(Input::spanned(&lexed, (input.len()..input.len()).into())).into_output_errors();
     show_errs(input, "stdin", errs);
 
