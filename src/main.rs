@@ -30,6 +30,26 @@ fn show_errs<T: Clone + Display>(src: &str, filename: &str, errs: Vec<Rich<T>>) 
 
 fn main() {
     let input = r#"
+enum Piece {
+    Pawn = 1,
+    Bishop = 2,
+    Knight = 4,
+    Rook = 8,
+    Queen = 16,
+    King = 32
+}
+
+union Option {
+    Piece some;
+    void none;
+}
+
+struct Selected {
+    int cursorx;
+    int cursory;
+    Option selected;
+}
+
 void printf(char[] msg) { 
     // ...
 }

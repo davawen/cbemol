@@ -332,26 +332,36 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
 
 impl std::fmt::Display for Ast<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const GRAY: &str = "\x1b[90m";
+        const RESET: &str = "\x1b[0m";
+        const ORANGE: &str = "\x1b[33m";
+        const GREEN: &str = "\x1b[32m";
+        const MAGENTA: &str = "\x1b[34m";
+        const CYAN: &str = "\x1b[36m";
+
         use Ast as A;
         match self {
-            A::Id(id, span) => write!(f, "{span} IDENT {id}"),
-            A::Num(n, span) => write!(f, "{span} NUM {n}"),
-            A::Literal(l, span) => write!(f, "{span} LITERAL {l:?}"),
-            A::UnaryExpr(op, e, span) => write!(f, "{span} OP {op} {e}"),
-            A::BinExpr(a, op, b, span) => write!(f, "{span} OP {op} {a} {b}"),
-            A::Declare { var, ty, value: Some(value), span } => write!(f, "{span} DECLARE {ty} {var} = {value}"),
-            A::Declare { var, ty, value: None, span } => write!(f, "{span} DECLARE {ty} {var}"),
-            A::Assign { var, value, span } => write!(f, "{span} ASSIGN {var} = {value}"),
-            A::IfExpr { cond, block, span } => write!(f, "{span} IF {cond} THEN {block}"),
-            A::LoopExpr(block, span) => write!(f, "{span} LOOP {block}"),
-            A::ForExpr { decl: (ty, name), it, body, span } => write!(f, "{span} FOR {ty} {name} IN {it}: {body}"),
-            A::Break(Some(e), span) => write!(f, "{span} BREAK {e}"),
-            A::Break(None, span) => write!(f, "{span} BREAK"),
-            A::Continue(Some(e), span) => write!(f, "{span} CONTINUE {e}"),
-            A::Continue(None, span) => write!(f, "{span} CONTINUE"),
-            A::Block(b, span) => write!(f, "{span} {b}"),
+            A::Id(id, span)                 => write!(f, "{GRAY}{span} {MAGENTA}IDENT {RESET}{id}"),
+            A::Num(n, span)                 => write!(f, "{GRAY}{span} {MAGENTA}NUM {ORANGE}{n}{RESET}"),
+            A::Literal(l, span)             => write!(f, "{GRAY}{span} {MAGENTA}LITERAL {GREEN}{l:?}{RESET}"),
+            A::UnaryExpr(op, e, span)       => write!(f, "{GRAY}{span} {MAGENTA}OP {RESET}{op} {e}"),
+            A::BinExpr(a, op, b, span)      => write!(f, "{GRAY}{span} {MAGENTA}OP {RESET}{op} {a} {b}"),
+            A::Assign { var, value, span }  => write!(f, "{GRAY}{span} {MAGENTA}ASSIGN {RESET}{var} = {value}"),
+            A::IfExpr { cond, block, span } => write!(f, "{GRAY}{span} {MAGENTA}IF {RESET}{cond} THEN {block}"),
+            A::LoopExpr(block, span)        => write!(f, "{GRAY}{span} {MAGENTA}LOOP {RESET}{block}"),
+            A::Break(Some(e), span)         => write!(f, "{GRAY}{span} {MAGENTA}BREAK {RESET}{e}"),
+            A::Break(None, span)            => write!(f, "{GRAY}{span} {MAGENTA}BREAK {RESET}"),
+            A::Continue(Some(e), span)      => write!(f, "{GRAY}{span} {MAGENTA}CONTINUE{RESET} {e}"),
+            A::Continue(None, span)         => write!(f, "{GRAY}{span} {MAGENTA}CONTINUE{RESET}"),
+            A::Block(b, span)               => write!(f, "{GRAY}{span} {RESET}{b}"),
+            A::ForExpr { decl: (ty, name), it, body, span } => 
+                write!(f, "{GRAY}{span} {MAGENTA}FOR {CYAN}{ty} {RESET}{name} IN {it} {body}"),
+            A::Declare { var, ty, value: Some(value), span } => 
+                write!(f, "{GRAY}{span} {MAGENTA}DECLARE {CYAN}{ty} {RESET}{var} = {value}"),
+            A::Declare { var, ty, value: None, span } => 
+                write!(f, "{GRAY}{span} {MAGENTA}DECLARE {CYAN}{ty} {RESET}{var}"),
             A::FuncCall { name, args, span } => {
-                write!(f, "{span} CALL {name} (")?;
+                write!(f, "{GRAY}{span} {MAGENTA}CALL {RESET}{name} (")?;
                 for arg in args {
                     if let (Some(arg), expr) = arg {
                         write!(f, "{arg} = {expr}, ")?;
@@ -362,30 +372,34 @@ impl std::fmt::Display for Ast<'_> {
                 write!(f, ")")
             }
             A::FunctionDef { name, ret, params, body, span } => {
-                write!(f, "{span} DEFINE FUNC {ret} {name} (")?;
+                write!(f, "{GRAY}{span} {MAGENTA}DEFINE FUNC {CYAN}{ret} {RESET}{name} (")?;
                 for param in params {
                     write!(f, "{param}")?;
                 }
-                write!(f, "): {body}")
+                write!(f, ") {body}")
             }
             A::StructDef { name, fields, span } => {
-                write!(f, "{span} DEFINE STRUCT {name}: {{")?;
+                write!(f, "{GRAY}{span} {MAGENTA}DEFINE STRUCT {CYAN}{name}{RESET} {{")?;
                 for (ty, name) in fields {
-                    write!(f, "  {ty} {name};")?;
+                    writeln!(f, "  {CYAN}{ty} {RESET}{name};")?;
                 }
                 write!(f, "}}")
             }
             A::EnumDef { name, variants, span } => {
-                writeln!(f, "{span} DEFINE ENUM {name}: {{")?;
-                for (name, _) in variants {
-                    writeln!(f, "  {name};")?;
+                writeln!(f, "{GRAY}{span} {MAGENTA}DEFINE ENUM {CYAN}{name} {RESET}{{")?;
+                for (name, value) in variants {
+                    write!(f, "  {name}")?;
+                    if let Some(value) = value {
+                        write!(f, " = {ORANGE}{value}{RESET}")?;
+                    }
+                    writeln!(f, ";")?;
                 }
                 write!(f, "}}")
             }
             A::UnionDef { name, variants, span } => {
-                writeln!(f, "{span} DEFINE UNION {name}: {{")?;
+                writeln!(f, "{GRAY}{span} {MAGENTA}DEFINE UNION {CYAN}{name} {RESET}{{")?;
                 for (ty, name) in variants {
-                    writeln!(f, "  {ty} {name};")?;
+                    writeln!(f, "  {CYAN}{ty} {RESET}{name};")?;
                 }
                 write!(f, "}}")
             }
@@ -395,10 +409,12 @@ impl std::fmt::Display for Ast<'_> {
 
 impl std::fmt::Display for Parameter<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const CYAN: &str = "\x1b[36m";
+        const RESET: &str = "\x1b[0m";
         if let Some(name) = self.outward_name {
             write!(f, "{name}: ")?;
         }
-        write!(f, "{} {}", self.ty, self.name)?;
+        write!(f, "{CYAN}{} {RESET}{}", self.ty, self.name)?;
         if let Some(value) = &self.value {
             write!(f, " = {value}")?;
         }
@@ -422,7 +438,7 @@ impl std::fmt::Display for Block<'_> {
         for line in s.lines() {
             writeln!(f, "  {line}")?;
         }
-        writeln!(f, "}}")
+        write!(f, "}}")
     }
 }
 
@@ -433,9 +449,9 @@ impl std::fmt::Display for Type<'_> {
             T::Id(id) => write!(f, "{id}"),
             T::Pointer(ty) => write!(f, "{ty}&"),
             T::FunctionPointer { ret, args } => {
-                write!(f, "{ret}(");
+                write!(f, "{ret}(")?;
                 for arg in args {
-                    write!(f, "{arg}, ");
+                    write!(f, "{arg}, ")?;
                 }
                 write!(f, ")")
             }
