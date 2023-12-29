@@ -16,6 +16,7 @@ pub enum Token<'a> {
     DoubleCaret,
     Exclamation,
     Pipeline,
+    Underscore,
     Plus,
     Minus,
     Star,
@@ -24,6 +25,7 @@ pub enum Token<'a> {
     Semicolon,
     Percent,
     Gt, Ge, Lt, Le, Eq, Ne,
+    Dot,
     DotDot,
     Comma,
     Equal,
@@ -62,6 +64,7 @@ impl Display for Token<'_> {
             T::DoubleCaret     => write!(f, "^^"),
             T::Exclamation     => write!(f, "!"),
             T::Pipeline        => write!(f, "|>"),
+            T::Underscore      => write!(f, "_"),
             T::Plus            => write!(f, "+"),
             T::Minus           => write!(f, "-"),
             T::Star            => write!(f, "*"),
@@ -75,6 +78,7 @@ impl Display for Token<'_> {
             T::Le              => write!(f, "<="),
             T::Eq              => write!(f, "=="),
             T::Ne              => write!(f, "!="),
+            T::Dot             => write!(f, "."),
             T::DotDot          => write!(f, ".."),
             T::Comma           => write!(f, ","),
             T::Equal           => write!(f, "="),
@@ -99,6 +103,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token<'a>, SimpleSpan)>, ext
         "continue" => Keyword::Continue.token(),
         "break" => Keyword::Break.token(),
         "loop" => Keyword::Loop.token(),
+        "_" => Token::Underscore,
         _ => Token::Id(id)
     });
 
@@ -124,6 +129,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token<'a>, SimpleSpan)>, ext
         just("<=").to(Token::Le), just("<").to(Token::Lt),
         just("==").to(Token::Eq), just("!=").to(Token::Ne),
         just("..").to(Token::DotDot),
+        just(".").to(Token::Dot),
         just(",").to(Token::Comma),
         just("=").to(Token::Equal),
         just("[").to(Token::LBracket), just("]").to(Token::RBracket),

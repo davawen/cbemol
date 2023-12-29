@@ -1,6 +1,3 @@
-
-use chumsky::combinator;
-use chumsky::input::MapExtra;
 use chumsky::input::SpannedInput;
 use chumsky::prelude::*;
 use chumsky::pratt::*;
@@ -11,17 +8,19 @@ pub type Span = SimpleSpan;
 
 #[derive(Debug, Clone)]
 pub enum Type<'inp> {
-    Id(&'inp str),
-    Pointer(Box<Type<'inp>>),
+    Id(&'inp str, Span),
+    Pointer(Box<Type<'inp>>, Span),
     FunctionPointer {
         ret: Box<Type<'inp>>,
-        args: Vec<Type<'inp>>
+        args: Vec<Type<'inp>>,
+        span: Span
     },
     Array {
         ty: Box<Type<'inp>>,
-        len: i32
+        len: i32,
+        span: Span
     },
-    Slice(Box<Type<'inp>>)
+    Slice(Box<Type<'inp>>, Span)
 }
 
 pub type BAst<'inp> = Box<Ast<'inp>>;
@@ -31,8 +30,10 @@ pub enum Ast<'inp> {
     Id(&'inp str, Span),
     Num(i32, Span),
     Literal(String, Span),
+    Shorthand(Span),
     UnaryExpr(UnaryOp, BAst<'inp>, Span),
     BinExpr(BAst<'inp>, BinOp, BAst<'inp>, Span),
+    Access(BAst<'inp>, &'inp str, Span),
     Declare {
         var: &'inp str,
         ty: Type<'inp>,
@@ -88,13 +89,40 @@ pub enum Ast<'inp> {
     },
 }
 
+impl Ast<'_> {
+    pub fn span(&self) -> Span {
+        match self {
+            Ast::Id(_, span)              => *span,
+            Ast::Num(_, span)             => *span,
+            Ast::Literal(_, span)         => *span,
+            Ast::Shorthand(span)          => *span,
+            Ast::UnaryExpr(_, _, span)    => *span,
+            Ast::BinExpr(_, _, _, span)   => *span,
+            Ast::Access(_, _, span)       => *span,
+            Ast::Declare { span, .. }     => *span,
+            Ast::Assign { span, .. }      => *span,
+            Ast::IfExpr { span, .. }      => *span,
+            Ast::LoopExpr(_, span)        => *span,
+            Ast::ForExpr { span, .. }     => *span,
+            Ast::Break(_, span)           => *span,
+            Ast::Continue(_, span)        => *span,
+            Ast::Block(_, span)           => *span,
+            Ast::FuncCall { span, .. }    => *span,
+            Ast::FunctionDef { span, .. } => *span,
+            Ast::StructDef { span, .. }   => *span,
+            Ast::EnumDef { span, .. }     => *span,
+            Ast::UnionDef { span, .. }    => *span,
+        }
+    }
+}
+
 /// A parameter is in the function definition, an argument is in the function call
 #[derive(Debug, Clone)]
 pub struct Parameter<'inp> {
-    outward_name: Option<&'inp str>,
-    ty: Type<'inp>,
-    name: &'inp str,
-    value: Option<Ast<'inp>>
+    pub outward_name: Option<&'inp str>,
+    pub ty: Type<'inp>,
+    pub name: &'inp str,
+    pub value: Option<Ast<'inp>>
 }
 
 #[derive(Debug, Clone)]
@@ -105,7 +133,7 @@ pub enum LValue<'inp> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<'inp>(Vec<Ast<'inp>>, Option<BAst<'inp>>);
+pub struct Block<'inp>(pub Vec<Ast<'inp>>, pub Option<BAst<'inp>>);
 
 #[derive(Debug, Clone)]
 pub enum UnaryOp {
@@ -144,7 +172,7 @@ fn comma_list<'a, T, P: Parser<'a, TInput<'a>, T, Extra<'a>>+ Clone>(p: P) -> im
     p.separated_by(just(Token::Comma)).collect()
 }
 
-/// Horrible hack to allow taking a |input, span| -> output closure without creating a custom parser type
+/// Dirty hack to allow taking an |input, span| closure without creating a custom parser type
 trait ParserSpan<'a, I: Input<'a>, O, E: extra::ParserExtra<'a, I>>: Sized + Parser<'a, I, O, E> {
     fn map_with_span<U, F: Clone + Fn(O, I::Span) -> U>(self, f: F) -> impl Parser<'a, I, U, E>;
 }
@@ -163,11 +191,11 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
     let num = any().filter(|x| matches!(x, Token::Num(_))).map(|x| if let Token::Num(n) = x { n } else { unreachable!() });
     let literal = any().filter(|x| matches!(x, Token::StrLiteral(_))).map(|x| if let Token::StrLiteral(s) = x { s } else { unreachable!() });
 
-    let ty = recursive(|ty| id.map(Type::Id).pratt((
-        postfix(3, just(Token::Ampersand), |ty| Type::Pointer(Box::new(ty))),
-        postfix(2, in_brackets(num), |ty, len| Type::Array { ty: Box::new(ty), len }),
-        postfix(2, in_brackets(empty()), |ty| Type::Slice(Box::new(ty))),
-        postfix(1, in_parens(comma_list(ty)), |ret, args| Type::FunctionPointer { ret: Box::new(ret), args })
+    let ty = recursive(|ty| id.map_with_span(Type::Id).pratt((
+        postfix(3, just(Token::Ampersand),    |ty, _,     span| Type::Pointer(Box::new(ty), span)),
+        postfix(2, in_brackets(num),          |ty, len,   span| Type::Array { ty: Box::new(ty), len, span }),
+        postfix(2, in_brackets(empty()),      |ty, _,     span| Type::Slice(Box::new(ty), span)),
+        postfix(1, in_parens(comma_list(ty)), |ret, args, span| Type::FunctionPointer { ret: Box::new(ret), args, span })
     )));
 
     let mut block = Recursive::declare();
@@ -205,6 +233,7 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
             id.map_with_span(Ast::Id),
             num.map_with_span(Ast::Num),
             literal.map_with_span(Ast::Literal),
+            just(Token::Underscore).to_span().map(Ast::Shorthand),
             in_parens(expr.clone())
         ));
 
@@ -220,6 +249,8 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
         }
 
         expr.define(atom.pratt((
+            postfix(10, just(Token::Dot).ignore_then(id), |r, f, s| Ast::Access(Box::new(r), f, s)),
+
             prefix(9, just(Token::Minus),       |_, r, s| op!(Negate, r, s)),
             prefix(9, just(Token::Ampersand),   |_, r, s| op!(AddressOf, r, s)),
             prefix(9, just(Token::Star),        |_, r, s| op!(Deref, r, s)),
@@ -344,8 +375,10 @@ impl std::fmt::Display for Ast<'_> {
             A::Id(id, span)                 => write!(f, "{GRAY}{span} {MAGENTA}IDENT {RESET}{id}"),
             A::Num(n, span)                 => write!(f, "{GRAY}{span} {MAGENTA}NUM {ORANGE}{n}{RESET}"),
             A::Literal(l, span)             => write!(f, "{GRAY}{span} {MAGENTA}LITERAL {GREEN}{l:?}{RESET}"),
+            A::Shorthand(span)              => write!(f, "{GRAY}{span} {MAGENTA}SHORTHAND {RESET}"),
             A::UnaryExpr(op, e, span)       => write!(f, "{GRAY}{span} {MAGENTA}OP {RESET}{op} {e}"),
             A::BinExpr(a, op, b, span)      => write!(f, "{GRAY}{span} {MAGENTA}OP {RESET}{op} {a} {b}"),
+            A::Access(e, name, span)        => write!(f, "{GRAY}{span} {RESET}{e}.{name}"),
             A::Assign { var, value, span }  => write!(f, "{GRAY}{span} {MAGENTA}ASSIGN {RESET}{var} = {value}"),
             A::IfExpr { cond, block, span } => write!(f, "{GRAY}{span} {MAGENTA}IF {RESET}{cond} THEN {block}"),
             A::LoopExpr(block, span)        => write!(f, "{GRAY}{span} {MAGENTA}LOOP {RESET}{block}"),
@@ -379,7 +412,7 @@ impl std::fmt::Display for Ast<'_> {
                 write!(f, ") {body}")
             }
             A::StructDef { name, fields, span } => {
-                write!(f, "{GRAY}{span} {MAGENTA}DEFINE STRUCT {CYAN}{name}{RESET} {{")?;
+                writeln!(f, "{GRAY}{span} {MAGENTA}DEFINE STRUCT {CYAN}{name}{RESET} {{")?;
                 for (ty, name) in fields {
                     writeln!(f, "  {CYAN}{ty} {RESET}{name};")?;
                 }
@@ -446,17 +479,17 @@ impl std::fmt::Display for Type<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Type as T;
         match self {
-            T::Id(id) => write!(f, "{id}"),
-            T::Pointer(ty) => write!(f, "{ty}&"),
-            T::FunctionPointer { ret, args } => {
+            T::Id(id, _) => write!(f, "{id}"),
+            T::Pointer(ty, _) => write!(f, "{ty}&"),
+            T::FunctionPointer { ret, args, span: _ } => {
                 write!(f, "{ret}(")?;
                 for arg in args {
                     write!(f, "{arg}, ")?;
                 }
                 write!(f, ")")
             }
-            T::Array { ty, len } => write!(f, "{ty}[{len}]"),
-            T::Slice(ty) => write!(f, "{ty}[]")
+            T::Array { ty, len, span: _ } => write!(f, "{ty}[{len}]"),
+            T::Slice(ty, _) => write!(f, "{ty}[]")
         }
     }
 }

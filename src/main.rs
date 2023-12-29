@@ -1,27 +1,57 @@
-use std::fmt::Display;
+use std::{fmt::{Display, Debug}, ops::Range};
 
 use ariadne::{Report, ReportKind, Label, Color};
 use ast::parser;
-use chumsky::{Parser, prelude::{Input, Rich}};
+use chumsky::{Parser, prelude::{Input, Rich}, span::SimpleSpan};
 use lexer::lexer;
 
 mod lexer;
 mod ast;
 mod ir;
 
-fn show_errs<T: Clone + Display>(src: &str, filename: &str, errs: Vec<Rich<T>>) {
+trait CompilerError: Sized {
+    fn map(self) -> impl CompilerError { self }
+    fn span(&self) -> SimpleSpan;
+    fn message(&self) -> String;
+    fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>>;
+}
+
+impl<T: Clone + Display + Debug> CompilerError for Rich<'_, T> {
+    fn map(self) -> impl CompilerError { self.map_token(|c| c.to_string()) }
+    fn span(&self) -> SimpleSpan { *self.span() }
+    fn message(&self) -> String { self.to_string() }
+    fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
+        vec![
+            Label::new((filename, self.span().into_range()))
+                .with_message(format!("Expected: {:?}", self.expected().collect::<Vec<_>>()))
+                .with_color(Color::Red)
+        ]
+    }
+}
+
+impl CompilerError for ir::lower::Error {
+    fn span(&self) -> SimpleSpan {
+        self.label.as_ref().map(|x| x.0).unwrap_or(SimpleSpan::new(0, 0))
+    }
+    fn message(&self) -> String { self.message.clone() }
+    fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
+        self.label.into_iter().map(|(span, message)| 
+            Label::new((filename, span.into_range()))
+                .with_message(message)
+                .with_color(Color::Red)
+        ).collect()
+    }
+}
+
+fn show_errs(src: &str, filename: &str, errs: Vec<impl CompilerError>) {
     let mut cache = (filename, src.into());
 
     errs.into_iter()
-        .map(|e| e.map_token(|c| c.to_string()))
+        .map(|e| e.map())
         .for_each(|e| {
             Report::build(ReportKind::Error, filename, e.span().start)
-                .with_message(e.to_string())
-                .with_label(
-                    Label::new((filename, e.span().into_range()))
-                        .with_message(format!("Expected: {:?}", e.expected().collect::<Vec<_>>()))
-                        .with_color(Color::Red),
-                )
+                .with_message(e.message())
+                .with_labels(e.labels(filename))
                 .finish()
                 .eprint(&mut cache)
                 .unwrap()
@@ -30,39 +60,67 @@ fn show_errs<T: Clone + Display>(src: &str, filename: &str, errs: Vec<Rich<T>>) 
 
 fn main() {
     let input = r#"
-enum Piece {
-    Pawn = 1,
-    Bishop = 2,
+union OptionInt {
+    i32 some;
+    void none;
+}
+
+enum PieceKind {
+    None,
+    Pawn,
+    Bishop,
     Knight = 4,
     Rook = 8,
     Queen = 16,
     King = 32
 }
 
-union Option {
-    Piece some;
-    void none;
+struct Piece {
+    PieceKind kind;
+    i32 x;
+    i32 y;
+    OptionInt count;
 }
 
-struct Selected {
-    int cursorx;
-    int cursory;
-    Option selected;
+struct Vec2 {
+    i32 x;
+    i32 y;
 }
 
-void printf(char[] msg) { 
-    // ...
+struct Vec3 {
+    Vec2 v;
+    i32 z;
+}
+
+Vec3 Vec3(v: Vec2 v, z: i32 z) {
+    Vec3 self;
+    // do stuff
+    self
+}
+
+Vec2 Vec2(x: i32 x, y: i32 y) {
+    Vec2 self;
+    // do stuff
+    self
+}
+
+void printf(i32 x) {
+    // do stuff
 }
 
 void main() {
-    int i = 0;
-    loop {
-        if i >= 5 { break }
+    Vec3 p = Vec3(v = Vec2(x = 10, y = 0), z = 12);
+
+    printf(p.v.y);
+
+    i32 i = 0;
+    //loop {
+        break i * 4 + 1;
 
         printf("\"message!\"\n");
 
         i = i + 1;
-    }
+    //}
 }
     "#;
 
@@ -77,7 +135,18 @@ void main() {
     show_errs(input, "stdin", errs);
 
     let Some(parsed) = parsed else { return };
-    for parsed in parsed {
+    for parsed in &parsed {
         println!("{parsed}");
     }
+
+    let p = ir::Program::lower(&parsed);
+    let p = match p {
+        Ok(p) => p,
+        Err(e) => {
+            show_errs(input, "stdin", vec![e]);
+            return;
+        }
+    };
+
+    println!("{p:#?}");
 }
