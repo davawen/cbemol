@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use slotmap::{SlotMap, new_key_type};
 
 pub mod lower;
+pub mod display;
 
 new_key_type! {
     pub struct TypeKey; 
@@ -30,14 +31,18 @@ pub enum UserType<'a> {
         variants: Vec<(&'a str, i32)>
     },
     Primitive(PrimitiveType),
-    Uninit, // ---
-    Unit, // void
+    /// `---`
+    Uninit,
+    /// `void` type is unit type
+    Unit,
+    /// type of `break`, `continue` and `return` expressions
+    /// can be cast to any type
     Never
 }
 
 #[derive(Debug)]
 pub enum PrimitiveType {
-    I32, Void
+    I32, F32
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -118,7 +123,7 @@ enum Expr<'a> {
 }
 
 #[derive(Debug)]
-enum UnaryOp { AddressOf, Deref, Negate }
+enum UnaryOp { AddressOf, Deref, Negate, Not }
 
 #[derive(Debug)]
 enum BinOp { Add, Sub, Mul, Div }

@@ -148,5 +148,5 @@ void main() {
         }
     };
 
-    println!("{p:#?}");
+    println!("{p}");
 }

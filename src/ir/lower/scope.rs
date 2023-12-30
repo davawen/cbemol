@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ir::{Var, Expr};
+use crate::ir::Var;
 
 #[derive(Default)]
 struct Scope<'a> {

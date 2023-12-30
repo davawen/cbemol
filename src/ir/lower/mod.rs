@@ -41,8 +41,9 @@ impl<'a> Program<'a> {
     }
 
     fn parse_type_decls(&mut self, program: &[Ast<'a>]) -> Result<()> {
+        self.type_decls.insert("void", self.types.insert(UserType::Unit));
         self.type_decls.insert("i32",  self.types.insert(UserType::Primitive(PrimitiveType::I32)));
-        self.type_decls.insert("void", self.types.insert(UserType::Primitive(PrimitiveType::Void)));
+        self.type_decls.insert("f32",  self.types.insert(UserType::Primitive(PrimitiveType::F32)));
 
         // parse types
         for decl in program {
@@ -130,7 +131,7 @@ impl<'a> Program<'a> {
         }
 
         if let Some(expr) = &block.1 {
-            let tmp = self.parse_expr_into_tmp(&expr, func, &mut env, scopes)?;
+            let tmp = self.parse_expr_into_tmp(expr, func, &mut env, scopes)?;
             env.stmts.push(Statement::Do(Expr::Return(Some(tmp))));
         }
 
@@ -142,7 +143,7 @@ impl<'a> Program<'a> {
         match node {
             Ast::Declare { var, ty, value, span: _ } => {
                 // evaluate value before adding the variable to scope
-                let value = value.as_ref().map(|value| self.parse_expr(&value, func, env, scopes));
+                let value = value.as_ref().map(|value| self.parse_expr(value, func, env, scopes));
 
                 let ty = self.parse_type(ty)?;
                 let key = func.variables.insert(Variable { ty });
@@ -216,7 +217,17 @@ impl<'a> Program<'a> {
                     Error::new("using a shorthand when not inside of a pipeline expression").with_label(*span, "appeared here")
                 )?)
             },
-            Ast::UnaryExpr(_, _, _) => todo!(),
+            Ast::UnaryExpr(op, expr, _) => {
+                let expr = self.parse_expr_into_tmp(expr, func, env, scopes)?;
+                // pretty stupid but future unary operations might need desugaring
+                let op = match op {
+                    ast::UnaryOp::Deref     => UnaryOp::Deref,
+                    ast::UnaryOp::AddressOf => UnaryOp::AddressOf,
+                    ast::UnaryOp::Negate    => UnaryOp::Negate,
+                    ast::UnaryOp::Not       => UnaryOp::Not
+                };
+                Expr::UnaryOp(op, expr)
+            },
             Ast::BinExpr(a, op, b, span) => match op {
                 ast::BinOp::Range => Err(
                     Error::new("TODO: range struct and range syntax").with_label(*span, "used here")
@@ -263,7 +274,7 @@ impl<'a> Program<'a> {
                     } else { // acessing type constant
                         let ty = self.type_decls.get(var).copied().ok_or(Error::new(format!("variable/type not declared: {var}")).with_label(*span, "used here"))?;
                         match &self.types[ty] {
-                            UserType::Enum { variants } => if variants.iter().find(|(name, _)| name == field).is_none() {
+                            UserType::Enum { variants } => if !variants.iter().any(|(name, _)| name == field) {
                                 Err(Error::new(format!("enumeration does not contain member {field}")).with_label(*span, "accessed here"))?
                             }
                             _ => Err(Error::new(format!("cannot access member of type {var}")).with_label(*span, "accessed here"))?
