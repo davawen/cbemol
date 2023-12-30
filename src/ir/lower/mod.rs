@@ -324,14 +324,14 @@ impl<'a> Program<'a> {
                 )?;
 
                 // make sure args are processed in the same order they are specified
-                let mut args: VecDeque<_> = args.iter().map(|(name, expr)| Ok((name, self.parse_expr_into_tmp(expr, func, env, scopes)?))).collect::<Result<_>>()?;
+                let mut args: VecDeque<_> = args.iter().map(|(name, expr, span)| Ok((name, self.parse_expr_into_tmp(expr, func, env, scopes)?, *span))).collect::<Result<_>>()?;
                 let mut ordered_args = Vec::new();
 
                 let num_args = args.len();
 
                 for param in &decl.params {
                     if let Some(outward_name) = &param.outward_name { // named parameter
-                        let arg = args.iter().position(|(name, _)| **name == Some(outward_name)).ok_or(
+                        let arg = args.iter().position(|(name, _, _)| **name == Some(outward_name)).ok_or(
                             Error::new(format!("expected argument {outward_name} in function call")).with_label(*span, "called here")
                         )?;
                         ordered_args.push(args.remove(arg).unwrap().1);
@@ -350,12 +350,15 @@ impl<'a> Program<'a> {
                     for arg in &args {
                         if let Some(name) = arg.0 {
                             Err(Error::new(format!("unknown named argument given: {name}"))
-                                .with_label(*span, "called here"))?
+                                .with_label(arg.2, "given here"))?
                         }
                     }
 
+                    // remaining arguments are all positional
+                    let span = args.iter().fold(args[0].2, |acc, (_, _, span)| Span::new(acc.start, span.end));
+
                     Err(Error::new(format!("too many arguments given, expected {}, got {num_args}", decl.params.len()))
-                        .with_label(*span, "called here"))?
+                        .with_label(span, "given here"))?
                 }
 
                 Expr::FuncCall(decl.key, ordered_args)

@@ -104,14 +104,14 @@ Vec2 Vec2(x: i32 x, y: i32 y) {
     self
 }
 
-void printf(i32 x) {
+void printf(msg: i32 x) {
     // do stuff
 }
 
 void main() {
     i32 x = ---;
 
-    printf(x); // hmmm
+    printf(msg = 10, x, x, x); // hmmm
 
     i32 i = 0;
     //loop {
