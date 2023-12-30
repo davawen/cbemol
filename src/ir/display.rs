@@ -145,6 +145,7 @@ impl Display for WithProgram<'_, Expr<'_>> {
             Expr::Var(v) => write!(f, "{v:?}"),
             Expr::Num(n) => write!(f, "{n}"),
             Expr::Literal(l) => write!(f, "{l:?}"),
+            Expr::Uninit => write!(f, "---"),
             Expr::Break(e) => match e {
                 Some(e) => write!(f, "break with {e:?}"),
                 None => write!(f, "break")

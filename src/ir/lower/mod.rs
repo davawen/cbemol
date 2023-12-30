@@ -115,7 +115,7 @@ impl<'a> Program<'a> {
 
                 let mut func = Function::default();
                 let mut scopes = Scopes::new();
-                func.body = self.parse_func(body, &mut func, &mut scopes)?;
+                func.body = self.parse_func(body, decl, &mut func, &mut scopes)?;
                 self.functions[decl.key] = func;
             }
         }
@@ -123,14 +123,19 @@ impl<'a> Program<'a> {
         Ok(())
     }
 
-    fn parse_func<'b>(&self, block: &'a ast::Block<'a>, func: &'b mut Function<'a>, scopes: &'b mut Scopes<'a>) -> Result<Block<'a>> {
+    fn parse_func<'b>(&self, body: &'a ast::Block<'a>, decl: &FunctionDecl<'a>, func: &'b mut Function<'a>, scopes: &'b mut Scopes<'a>) -> Result<Block<'a>> {
         scopes.push();
+        for param in &decl.params {
+            let var = func.variables.insert(Variable { ty: param.ty.clone() });
+            scopes.add_var(param.name, var);
+        }
+
         let mut env = Block::default();
-        for statement in &block.0 {
+        for statement in &body.0 {
             self.parse_statement(statement, func, &mut env, scopes)?;
         }
 
-        if let Some(expr) = &block.1 {
+        if let Some(expr) = &body.1 {
             let tmp = self.parse_expr_into_tmp(expr, func, &mut env, scopes)?;
             env.stmts.push(Statement::Do(Expr::Return(Some(tmp))));
         }
@@ -175,18 +180,21 @@ impl<'a> Program<'a> {
                 env.stmts.push(statement);
             }
             Ast::Block(block, _span) => {
-                scopes.push();
-                let mut env = Block::default();
-                for statement in &block.0 {
-                    self.parse_statement(statement, func, &mut env, scopes)?;
-                }
+                let block = {
+                    scopes.push();
+                    let mut env = Block::default();
+                    for statement in &block.0 {
+                        self.parse_statement(statement, func, &mut env, scopes)?;
+                    }
 
-                if let Some(expr) = &block.1 {
-                    let expr = self.parse_expr(expr, func, &mut env, scopes)?;
-                    env.stmts.push(Statement::Do(expr));
-                }
-
-                scopes.pop();
+                    if let Some(expr) = &block.1 {
+                        let expr = self.parse_expr(expr, func, &mut env, scopes)?;
+                        env.stmts.push(Statement::Do(expr));
+                    }
+                    scopes.pop();
+                    env
+                };
+                env.stmts.push(Statement::Block(block));
             }
             Ast::IfExpr { span, .. } | Ast::LoopExpr(_, span) | Ast::ForExpr { span, .. } => Err(
                 Error::new("TODO: implement control flow").with_label(*span, "used here")
@@ -216,7 +224,8 @@ impl<'a> Program<'a> {
                 Expr::Var(scopes.shorthand().ok_or(
                     Error::new("using a shorthand when not inside of a pipeline expression").with_label(*span, "appeared here")
                 )?)
-            },
+            }
+            Ast::Uninit(_) => Expr::Uninit,
             Ast::UnaryExpr(op, expr, _) => {
                 let expr = self.parse_expr_into_tmp(expr, func, env, scopes)?;
                 // pretty stupid but future unary operations might need desugaring
@@ -227,7 +236,7 @@ impl<'a> Program<'a> {
                     ast::UnaryOp::Not       => UnaryOp::Not
                 };
                 Expr::UnaryOp(op, expr)
-            },
+            }
             Ast::BinExpr(a, op, b, span) => match op {
                 ast::BinOp::Range => Err(
                     Error::new("TODO: range struct and range syntax").with_label(*span, "used here")

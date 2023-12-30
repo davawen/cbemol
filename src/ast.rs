@@ -31,6 +31,7 @@ pub enum Ast<'inp> {
     Num(i32, Span),
     Literal(String, Span),
     Shorthand(Span),
+    Uninit(Span),
     UnaryExpr(UnaryOp, BAst<'inp>, Span),
     BinExpr(BAst<'inp>, BinOp, BAst<'inp>, Span),
     Access(BAst<'inp>, &'inp str, Span),
@@ -96,6 +97,7 @@ impl Ast<'_> {
             Ast::Num(_, span)             => *span,
             Ast::Literal(_, span)         => *span,
             Ast::Shorthand(span)          => *span,
+            Ast::Uninit(span)             => *span,
             Ast::UnaryExpr(_, _, span)    => *span,
             Ast::BinExpr(_, _, _, span)   => *span,
             Ast::Access(_, _, span)       => *span,
@@ -234,6 +236,7 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
             num.map_with_span(Ast::Num),
             literal.map_with_span(Ast::Literal),
             just(Token::Underscore).to_span().map(Ast::Shorthand),
+            just(Token::TripleDash).to_span().map(Ast::Uninit),
             in_parens(expr.clone())
         ));
 
@@ -376,6 +379,7 @@ impl std::fmt::Display for Ast<'_> {
             A::Num(n, span)                 => write!(f, "{GRAY}{span} {MAGENTA}NUM {ORANGE}{n}{RESET}"),
             A::Literal(l, span)             => write!(f, "{GRAY}{span} {MAGENTA}LITERAL {GREEN}{l:?}{RESET}"),
             A::Shorthand(span)              => write!(f, "{GRAY}{span} {MAGENTA}SHORTHAND {RESET}"),
+            A::Uninit(span)                 => write!(f, "{GRAY}{span} {MAGENTA}UNINIT {RESET}"),
             A::UnaryExpr(op, e, span)       => write!(f, "{GRAY}{span} {MAGENTA}OP {RESET}{op} {e}"),
             A::BinExpr(a, op, b, span)      => write!(f, "{GRAY}{span} {MAGENTA}OP {RESET}{op} {a} {b}"),
             A::Access(e, name, span)        => write!(f, "{GRAY}{span} {RESET}{e}.{name}"),

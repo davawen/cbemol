@@ -45,7 +45,7 @@ pub enum PrimitiveType {
     I32, F32
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
     Direct(TypeKey),
     Ptr(Box<Type>),
@@ -112,6 +112,7 @@ enum Expr<'a> {
     Var(Var),
     Num(i32),
     Literal(String),
+    Uninit,
     FieldAccess(Var, &'a str),
     PathAccess(TypeKey, &'a str),
     FuncCall(FuncKey, Vec<Var>),

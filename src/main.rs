@@ -109,9 +109,9 @@ void printf(i32 x) {
 }
 
 void main() {
-    Vec3 p = Vec3(v = Vec2(x = 10, y = 0), z = 12);
+    i32 x = ---;
 
-    printf(p.v.y);
+    printf(x); // hmmm
 
     i32 i = 0;
     //loop {
