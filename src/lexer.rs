@@ -40,7 +40,7 @@ pub enum Token<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Keyword {
-    Struct, Union, Enum, If, For, In, Continue, Break, Loop
+    Struct, Union, Enum, If, Else, For, In, Continue, Break, Loop
 }
 
 impl Keyword {
@@ -100,6 +100,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token<'a>, SimpleSpan)>, ext
         "union" => Keyword::Union.token(),
         "enum" => Keyword::Enum.token(),
         "if" => Keyword::If.token(),
+        "else" => Keyword::Else.token(),
         "for" => Keyword::For.token(),
         "in" => Keyword::In.token(),
         "continue" => Keyword::Continue.token(),

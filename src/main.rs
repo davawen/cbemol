@@ -109,18 +109,16 @@ void printf(msg: i32 x) {
 }
 
 void main() {
-    i32 x = ---;
-
-    printf(msg = 10, x, x, x); // hmmm
-
-    i32 i = 0;
-    //loop {
-        break i * 4 + 1;
-
-        printf("\"message!\"\n");
-
-        i = i + 1;
-    //}
+    i32 a = 0;
+    if a == 0 {
+        printf(10);
+    } else if a > 10 && a < 20 {
+        printf(15);
+    } else if a < 5 && a > -10 {
+        printf(0);
+    } else {
+        printf(a);
+    }
 }
     "#;
 

@@ -51,6 +51,8 @@ pub enum Ast<'inp> {
     IfExpr {
         cond: BAst<'inp>,
         block: Block<'inp>,
+        /// `else if`s will be stored as recursive else blocks
+        else_branch: Option<Box<Ast<'inp>>>,
         span: Span
     },
     LoopExpr(Block<'inp>, Span),
@@ -207,11 +209,21 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
     let mut expr = Recursive::declare();
 
     {
-        let atom_with_block = choice((
+        let if_expr = recursive(|if_expr| {
             just(Keyword::If.token())
                 .ignore_then(expr.clone())
                 .then(block.clone())
-                .map_with_span(|(cond, block), span| Ast::IfExpr { cond: Box::new(cond), block, span }),
+                .then(just(Keyword::Else.token())
+                    .ignore_then(choice((
+                        block.clone().map_with_span(Ast::Block), // else block
+                        if_expr // else if block
+                    )).map(Box::new).or_not())
+                )
+                .map_with_span(|((cond, block), else_branch), span| Ast::IfExpr { cond: Box::new(cond), block, span, else_branch })
+        });
+
+        let atom_with_block = choice((
+            if_expr,
             just(Keyword::For.token())
                 .ignore_then(ty.clone().then(id))
                 .then_ignore(just(Keyword::In.token()))
