@@ -133,8 +133,11 @@ impl Display for WithProgram<'_, Statement<'_>> {
         match &self.0 {
             Statement::Do(e) => writeln!(f, "DO {}", e.with(self.1)),
             Statement::Assign(var, e) => writeln!(f, "{var:?} = {}", e.with(self.1)),
-            Statement::SetDeref(var, e) => writeln!(f, "*{var:?} = {}", e.with(self.1)),
-            Statement::Block(b) => writeln!(f, "{}", b.with(self.1))
+            Statement::DerefAssign(var, e) => writeln!(f, "*{var:?} = {}", e.with(self.1)),
+            Statement::Block(b) => writeln!(f, "{}", b.with(self.1)),
+            Statement::If { cond, block, else_block: Some(else_block) } => writeln!(f, "IF {} THEN {} ELSE {}", cond.with(self.1), block.with(self.1), else_block.with(self.1)),
+            Statement::If { cond, block, else_block: None } => writeln!(f, "IF {} THEN {}", cond.with(self.1), block.with(self.1)),
+            Statement::Loop(block) => writeln!(f, "LOOP {}", block.with(self.1))
         }
     }
 }
@@ -146,14 +149,9 @@ impl Display for WithProgram<'_, Expr<'_>> {
             Expr::Num(n) => write!(f, "{n}"),
             Expr::Literal(l) => write!(f, "{l:?}"),
             Expr::Uninit => write!(f, "---"),
-            Expr::Break(e) => match e {
-                Some(e) => write!(f, "break with {e:?}"),
-                None => write!(f, "break")
-            }
-            Expr::Continue(e) => match e {
-                Some(e) => write!(f, "continue with {e:?}"),
-                None => write!(f, "continue")
-            }
+            Expr::Unit => write!(f, "{{}}"),
+            Expr::Break => write!(f, "break"),
+            Expr::Continue => write!(f, "continue"),
             Expr::Return(e) => match e {
                 Some(e) => write!(f, "return with {e:?}"),
                 None => write!(f, "return")
@@ -190,8 +188,10 @@ impl Display for BinOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use BinOp as O;
         let s = match self {
-            O::Add => "+", O::Sub => "-",
-            O::Mul => "*", O::Div => "/"
+            O::Add => "+", O::Sub => "-", O::Mul => "*", O::Div => "/", O::Mod => "%",
+            O::BinAnd => "&&", O::BinOr => "||", O::BinXor => "^^",
+            O::And => "&", O::Or => "|", O::Xor => "^",
+            O::Eq => "==", O::Ne => "!=", O::Gt => ">", O::Ge => ">=", O::Lt => "<", O::Le => "<="
         };
         write!(f, "{s}")
     }

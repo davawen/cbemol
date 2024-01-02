@@ -168,36 +168,46 @@ impl<'a> Program<'a> {
                         Statement::Assign(var, value)
                     }
                     ast::LValue::Deref(expr) => if let Ast::Id(name, span) = &**expr {
-                        Statement::SetDeref(scopes.var(name)
+                        Statement::DerefAssign(scopes.var(name)
                             .ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "used here"))?,
                             value
                         )
                     } else {
-                        Statement::SetDeref(self.parse_expr_into_tmp(expr, func, env, scopes)?, value)
+                        Statement::DerefAssign(self.parse_expr_into_tmp(expr, func, env, scopes)?, value)
                     }
                     ast::LValue::Index(_array, _index) => Err(Error::new("TODO: implement indexing").with_label(*span, "used here"))?
                 };
                 env.stmts.push(statement);
             }
             Ast::Block(block, _span) => {
-                let block = {
-                    scopes.push();
-                    let mut env = Block::default();
-                    for statement in &block.0 {
-                        self.parse_statement(statement, func, &mut env, scopes)?;
-                    }
-
-                    if let Some(expr) = &block.1 {
-                        let expr = self.parse_expr(expr, func, &mut env, scopes)?;
-                        env.stmts.push(Statement::Do(expr));
-                    }
-                    scopes.pop();
-                    env
-                };
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(Statement::Do)))?;
                 env.stmts.push(Statement::Block(block));
             }
-            Ast::IfExpr { span, .. } | Ast::LoopExpr(_, span) | Ast::ForExpr { span, .. } => Err(
-                Error::new("TODO: implement control flow").with_label(*span, "used here")
+            Ast::IfExpr { cond, block, else_branch, span } => {
+                let cond = self.parse_expr(cond, func, env, scopes)?;
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(Statement::Do)))?;
+                let else_block = else_branch.as_ref().map(|branch| match &**branch {
+                    Ast::IfExpr { .. } => {
+                        let mut block = Block::default();
+                        self.parse_statement(branch, func, &mut block, scopes)?;
+                        Ok(block)
+                    }
+                    Ast::Block(b, _) => self.parse_block(b, func, scopes, |expr| Ok(expr.map(Statement::Do))),
+                    _ => unreachable!()
+                }).transpose()?;
+
+                env.stmts.push(Statement::If { cond, block, else_block })
+            }
+            Ast::LoopExpr(block, _) => {
+                scopes.push_loop(scope::LoopScope { output_var: None });
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(Statement::Do)))?;
+                scopes.pop_loop();
+
+                env.stmts.push(Statement::Loop(block))
+            }
+            Ast::ForExpr { span, .. } => Err(
+                Error::new("TODO: for expressions require implementation of interfaces and iterators")
+                    .with_label(*span, "used here")
             )?,
             // Ast::IfExpr { cond, block, span } => todo!(),
             // Ast::LoopExpr(_, _) => todo!(),
@@ -252,26 +262,21 @@ impl<'a> Program<'a> {
                 op => {
                     let a = self.parse_expr_into_tmp(a, func, env, scopes)?;
                     let b = self.parse_expr_into_tmp(b, func, env, scopes)?;
-                    let op = match op {
-                        ast::BinOp::Add    => BinOp::Add,
-                        ast::BinOp::Sub    => BinOp::Sub,
-                        ast::BinOp::Mul    => BinOp::Mul,
-                        ast::BinOp::Div    => BinOp::Div,
-                        ast::BinOp::Mod    => todo!(),
-                        ast::BinOp::BinAnd => todo!(),
-                        ast::BinOp::BinOr  => todo!(),
-                        ast::BinOp::BinXor => todo!(),
-                        ast::BinOp::And    => todo!(),
-                        ast::BinOp::Or     => todo!(),
-                        ast::BinOp::Xor    => todo!(),
-                        ast::BinOp::Eq     => todo!(),
-                        ast::BinOp::Ne     => todo!(),
-                        ast::BinOp::Gt     => todo!(),
-                        ast::BinOp::Ge     => todo!(),
-                        ast::BinOp::Lt     => todo!(),
-                        ast::BinOp::Le     => todo!(),
-                        ast::BinOp::Range  => unreachable!(),
-                        ast::BinOp::Pipe   => unreachable!(),
+                    macro_rules! map_op {
+                        ($op:expr, $($name:ident),* ; $($unreach:ident),*) => {
+                            match $op {
+                                $(ast::BinOp::$name => BinOp::$name),*,
+                                $(ast::BinOp::$unreach => unreachable!()),*
+                            }
+                        };
+                    }
+                    let op = map_op! { op, 
+                        Add, Sub, Mul, Div, Mod,
+                        BinAnd, BinOr, BinXor,
+                        And, Or, Xor,
+                        Eq, Ne, Gt, Ge, Lt, Le;
+                        Range,
+                        Pipe
                     };
                     Expr::BinOp(a, op, b)
                 }
@@ -295,27 +300,16 @@ impl<'a> Program<'a> {
                     Expr::FieldAccess(var, field)
                 }
             },
-            // TODO: keep additional information in scope about which loop it comes from
-            Ast::Break(expr, _) => Expr::Break(expr.as_ref().map(|e| self.parse_expr_into_tmp(e, func, env, scopes)).transpose()?),
-            Ast::Continue(expr, _) => Expr::Continue(expr.as_ref().map(|e| self.parse_expr_into_tmp(e, func, env, scopes)).transpose()?),
             Ast::Block(block, span) => {
                 // store bock return value
                 let v = func.variables.insert(Variable { ty: Type::Undeclared });
+                let block = self.parse_block(block, func, scopes, 
+                    |expr| Ok(expr.map(|expr| Statement::Assign(v, expr))
+                        .or(Some(Statement::Assign(v, Expr::Unit)))
+                    )
+                )?;
+                env.stmts.push(Statement::Block(block));
 
-                scopes.push();
-                let mut env = Block::default();
-                for statement in &block.0 {
-                    self.parse_statement(statement, func, &mut env, scopes)?;
-                }
-
-                if let Some(expr) = &block.1 {
-                    let expr = self.parse_expr(expr, func, &mut env, scopes)?;
-                    env.stmts.push(Statement::Assign(v, expr));
-                } else {
-                    Err(Error::new("block is expected to return a value, but doesn't have any end expression").with_label(*span, "defined here"))?
-                }
-
-                scopes.pop();
                 Expr::Var(v)
             },
             Ast::FuncCall { name, args, span } => {
@@ -363,8 +357,83 @@ impl<'a> Program<'a> {
 
                 Expr::FuncCall(decl.key, ordered_args)
             },
-            Ast::IfExpr { span, .. } | Ast::LoopExpr(_, span) | Ast::ForExpr { span, .. } => Err(
-                Error::new("TODO: implement expression control flow (store resulting block expression into variable in outer scope)")
+            Ast::IfExpr { cond, block, else_branch, span } => {
+                // store return value
+                let v = func.variables.insert(Variable { ty: Type::Undeclared });
+
+                let last_map = |expr: Option<Expr<'a>>| Ok(
+                    expr.map(|expr| Statement::Assign(v, expr))
+                        .or(Some(Statement::Assign(v, Expr::Unit)))
+                );
+
+                let cond = self.parse_expr(cond, func, env, scopes)?;
+                let block = self.parse_block(block, func, scopes, last_map)?;
+                let Some(branch) = else_branch else {
+                    Err(Error::new("no else branch after if expression")
+                        .with_label(Span::new(span.end - 1, span.end), "expected else branch here"))?
+                };
+
+                let else_block = match &**branch {
+                    Ast::IfExpr { .. } => {
+                        // FIXME: This recursively parses else-ifs as expression,
+                        // which leads to the creation of many unneeded temporaries
+                        // (the result of every else-if can and should directly be stored in `v`).
+                        // It can be fixed by storing else-ifs linearly (as a vector),
+                        // or by creating a special enum and function for parsing if blocks
+                        let mut block = Block::default();
+                        let ret = self.parse_expr(branch, func, &mut block, scopes)?;
+                        block.stmts.push(Statement::Assign(v, ret));
+                        block
+                    }
+                    Ast::Block(b, _) => self.parse_block(b, func, scopes, last_map)?,
+                    _ => unreachable!()
+                };
+                env.stmts.push(Statement::If { cond, block, else_block: Some(else_block) });
+                Expr::Var(v)
+            }
+            Ast::LoopExpr(block, span) => {
+                // store return value
+                let v = func.variables.insert(Variable { ty: Type::Undeclared });
+
+                scopes.push_loop(scope::LoopScope { output_var: Some(v) });
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(|expr| Statement::Assign(v, expr))))?;
+                scopes.pop_loop();
+
+                env.stmts.push(Statement::Loop(block));
+                Expr::Var(v)
+            }
+            Ast::Break(expr, span) => {
+                let expr = expr.as_ref().map(|expr| self.parse_expr(expr, func, env, scopes)).transpose()?;
+                let Some(current_loop) = scopes.current_loop() else {
+                    Err(Error::new("breaking when not inside of a loop")
+                        .with_label(*span, "break is here"))?
+                };
+
+                match (expr, current_loop.output_var) {
+                    (None, None) | (None, Some(_)) => (),
+                    (Some(_), None) => Err(Error::new("breaking with a value, inside of a loop that doesn't return anything")
+                        .with_label(*span, "break is here"))?,
+                    (Some(expr), Some(var)) => env.stmts.push(Statement::Assign(var, expr))
+                }
+                Expr::Break
+            }
+            Ast::Continue(expr, span) => {
+                let expr = expr.as_ref().map(|expr| self.parse_expr(expr, func, env, scopes)).transpose()?;
+                let Some(current_loop) = scopes.current_loop() else {
+                    Err(Error::new("continuing when not inside of a loop")
+                        .with_label(*span, "continue is here"))?
+                };
+
+                match (expr, current_loop.output_var) {
+                    (None, None) | (None, Some(_)) => (),
+                    (Some(_), None) => Err(Error::new("continuing with a value, inside of a loop that doesn't return anything")
+                        .with_label(*span, "continue is here"))?,
+                    (Some(expr), Some(var)) => env.stmts.push(Statement::Assign(var, expr))
+                }
+                Expr::Continue
+            }
+            Ast::ForExpr { span, .. } => Err(
+                Error::new("for loops cannot return values (as there is a possibility they might never enter the loop)")
                     .with_label(*span, "used here")
             )?,
             Ast::Declare { span, .. } | Ast::Assign { span, .. } => Err(
@@ -387,6 +456,31 @@ impl<'a> Program<'a> {
         let var = func.variables.insert(Variable { ty: Type::Undeclared });
         env.stmts.push(Statement::Assign(var, expr));
         Ok(var)
+    }
+
+    /// parses a block
+    /// handles pushing a new scope and adding every statement in the block
+    /// doesn't require a reference to the current environment (since it creates one by itself)
+    /// `last_map` specifies what to do with the last expression in the block
+    fn parse_block<'b>(
+        &self,
+        block: &'a ast::Block<'a>,
+        func: &'b mut Function<'a>,
+        scopes: &'b mut Scopes<'a>,
+        last_map: impl Fn(Option<Expr<'a>>) -> Result<Option<Statement<'a>>>
+    ) -> Result<Block<'a>> {
+        scopes.push();
+        let mut env = Block::default();
+        for statement in &block.0 {
+            self.parse_statement(statement, func, &mut env, scopes)?;
+        }
+
+        let last_expr = block.1.as_ref().map(|expr| self.parse_expr(expr, func, &mut env, scopes)).transpose()?;
+        if let Some(stmt) = last_map(last_expr)? {
+            env.stmts.push(stmt);
+        }
+        scopes.pop();
+        Ok(env)
     }
 
     fn parse_type(&self, ty: &ast::Type) -> Result<Type> {

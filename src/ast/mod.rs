@@ -51,7 +51,8 @@ pub enum Ast<'inp> {
     IfExpr {
         cond: BAst<'inp>,
         block: Block<'inp>,
-        /// `else if`s will be stored as recursive else blocks
+        /// either an `Ast::IfExpr` if it's an "else if", or an `Ast::Block` if it's an "else".
+        /// multiple else ifs will be stored as recursive else blocks
         else_branch: Option<Box<Ast<'inp>>>,
         span: Span
     },
@@ -217,7 +218,7 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
                     .ignore_then(choice((
                         block.clone().map_with_span(Ast::Block), // else block
                         if_expr // else if block
-                    )).map(Box::new).or_not())
+                    )).map(Box::new)).or_not()
                 )
                 .map_with_span(|((cond, block), else_branch), span| Ast::IfExpr { cond: Box::new(cond), block, span, else_branch })
         });

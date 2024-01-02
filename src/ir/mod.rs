@@ -97,14 +97,15 @@ enum Statement<'a> {
     /// Assigns the value of expr to a variable
     Assign(Var, Expr<'a>),
     /// Assigns the value of expr to the location in memory pointed to by a variable
-    SetDeref(Var, Expr<'a>),
+    DerefAssign(Var, Expr<'a>),
     Do(Expr<'a>),
     Block(Block<'a>),
-    // If {
-    //     cond: Expr<'a>,
-    //     block: Block<'a>
-    // }
-    //Loop(Block<'a>)
+    If {
+        cond: Expr<'a>,
+        block: Block<'a>,
+        else_block: Option<Block<'a>>
+    },
+    Loop(Block<'a>)
 }
 
 #[derive(Debug)]
@@ -113,12 +114,13 @@ enum Expr<'a> {
     Num(i32),
     Literal(String),
     Uninit,
+    Unit,
     FieldAccess(Var, &'a str),
     PathAccess(TypeKey, &'a str),
     FuncCall(FuncKey, Vec<Var>),
     Return(Option<Var>),
-    Break(Option<Var>),
-    Continue(Option<Var>),
+    Break,
+    Continue,
     BinOp(Var, BinOp, Var),
     UnaryOp(UnaryOp, Var)
 }
@@ -127,4 +129,9 @@ enum Expr<'a> {
 enum UnaryOp { AddressOf, Deref, Negate, Not }
 
 #[derive(Debug)]
-enum BinOp { Add, Sub, Mul, Div }
+enum BinOp { 
+    Add, Sub, Mul, Div, Mod,
+    BinAnd, BinOr, BinXor,
+    And, Or, Xor,
+    Eq, Ne, Gt, Ge, Lt, Le
+}

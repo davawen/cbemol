@@ -110,15 +110,10 @@ void printf(msg: i32 x) {
 
 void main() {
     i32 a = 0;
-    if a == 0 {
-        printf(10);
-    } else if a > 10 && a < 20 {
-        printf(15);
-    } else if a < 5 && a > -10 {
-        printf(0);
-    } else {
-        printf(a);
-    }
+    i32 rest = loop {
+        if a > 10 { break a*2 }
+        a = a + 1;
+    };
 }
     "#;
 

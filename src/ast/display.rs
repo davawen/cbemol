@@ -15,8 +15,8 @@ impl std::fmt::Display for Ast<'_> {
             A::Literal(l, _)             => write!(f, "{MAGENTA}LITERAL {GREEN}{l:?}{RESET}"),
             A::Shorthand(_)              => write!(f, "{MAGENTA}SHORTHAND {RESET}"),
             A::Uninit(_)                 => write!(f, "{MAGENTA}UNINIT {RESET}"),
-            A::UnaryExpr(op, e, _)       => write!(f, "{MAGENTA}OP {RESET}{op} {e}"),
-            A::BinExpr(a, op, b, _)      => write!(f, "{MAGENTA}OP {RESET}{op} {a} {b}"),
+            A::UnaryExpr(op, e, _)       => write!(f, "({op} {e})"),
+            A::BinExpr(a, op, b, _)      => write!(f, "({a} {op} {b})"),
             A::Access(e, name, _)        => write!(f, "{RESET}{e}.{name}"),
             A::Assign { var, value, span: _ }  => write!(f, "{MAGENTA}ASSIGN {RESET}{var} = {value}"),
             A::IfExpr { cond, block, else_branch, span: _ } => if let Some(else_branch) = else_branch {
