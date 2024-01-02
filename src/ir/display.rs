@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use super::{Program, Block, Statement, Expr, UnaryOp, BinOp, Type, UserType, PrimitiveType, Function};
+use super::{Program, Block, Statement, Expr, UnaryOp, BinOp, Type, UserType, PrimitiveType, Function, Value};
 
 /// permits drilling the Program struct through the Display trait
 struct WithProgram<'a, T>(&'a T, &'a Program<'a>);
@@ -133,7 +133,7 @@ impl Display for WithProgram<'_, Statement<'_>> {
         match &self.0 {
             Statement::Do(e) => writeln!(f, "DO {}", e.with(self.1)),
             Statement::Assign(var, e) => writeln!(f, "{var:?} = {}", e.with(self.1)),
-            Statement::DerefAssign(var, e) => writeln!(f, "*{var:?} = {}", e.with(self.1)),
+            Statement::DerefAssign(var, e) => writeln!(f, "*{} = {}", var.with(self.1), e.with(self.1)),
             Statement::Block(b) => writeln!(f, "{}", b.with(self.1)),
             Statement::If { cond, block, else_block: Some(else_block) } => writeln!(f, "IF {} THEN {} ELSE {}", cond.with(self.1), block.with(self.1), else_block.with(self.1)),
             Statement::If { cond, block, else_block: None } => writeln!(f, "IF {} THEN {}", cond.with(self.1), block.with(self.1)),
@@ -142,31 +142,39 @@ impl Display for WithProgram<'_, Statement<'_>> {
     }
 }
 
+impl Display for WithProgram<'_, Value> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Value::Var(v) => write!(f, "{v:?}"),
+            Value::Num(n) => write!(f, "{n}"),
+            Value::Literal(l) => write!(f, "{:?}", self.1.literals[*l]),
+            Value::Uninit => write!(f, "---"),
+            Value::Unit => write!(f, "{{}}")
+        }
+    }
+}
+
 impl Display for WithProgram<'_, Expr<'_>> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self.0 {
-            Expr::Var(v) => write!(f, "{v:?}"),
-            Expr::Num(n) => write!(f, "{n}"),
-            Expr::Literal(l) => write!(f, "{l:?}"),
-            Expr::Uninit => write!(f, "---"),
-            Expr::Unit => write!(f, "{{}}"),
+            Expr::Value(v) => write!(f, "{}", v.with(self.1)),
             Expr::Break => write!(f, "break"),
             Expr::Continue => write!(f, "continue"),
             Expr::Return(e) => match e {
-                Some(e) => write!(f, "return with {e:?}"),
+                Some(e) => write!(f, "return with {}", e.with(self.1)),
                 None => write!(f, "return")
             }
-            Expr::FieldAccess(var, field) => write!(f, "{var:?}.{field}"),
+            Expr::FieldAccess(var, field) => write!(f, "{}.{field}", var.with(self.1)),
             Expr::PathAccess(ty, field) => write!(f, "get constant {field} from {ty:?}"),
             Expr::FuncCall(func, args) => {
                 write!(f, "call {func:?} with (")?;
                 for arg in args {
-                    write!(f, "{arg:?}, ")?;
+                    write!(f, "{}, ", arg.with(self.1))?;
                 }
                 write!(f, ")")
             }
-            Expr::UnaryOp(op, var) => write!(f, "{op} {var:?}"),
-            Expr::BinOp(a, op, b) => write!(f, "{a:?} {op} {b:?}")
+            Expr::UnaryOp(op, var) => write!(f, "{op} {}", var.with(self.1)),
+            Expr::BinOp(a, op, b) => write!(f, "{} {op} {}", a.with(self.1), b.with(self.1))
         }
     }
 }

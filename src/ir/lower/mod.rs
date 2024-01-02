@@ -111,22 +111,23 @@ impl<'a> Program<'a> {
     fn parse_funcs(&mut self, program: &'a [Ast<'a>]) -> Result<()> {
         for decl in program {
             if let Ast::FunctionDef { name, body, span: _, .. } = decl {
-                let decl = &self.function_decls[name];
+                let decl = self.function_decls[name].clone();
+                let key = decl.key;
 
                 let mut func = Function::default();
                 let mut scopes = Scopes::new();
                 func.body = self.parse_func(body, decl, &mut func, &mut scopes)?;
-                self.functions[decl.key] = func;
+                self.functions[key] = func;
             }
         }
 
         Ok(())
     }
 
-    fn parse_func<'b>(&self, body: &'a ast::Block<'a>, decl: &FunctionDecl<'a>, func: &'b mut Function<'a>, scopes: &'b mut Scopes<'a>) -> Result<Block<'a>> {
+    fn parse_func<'b>(&mut self, body: &'a ast::Block<'a>, decl: FunctionDecl<'a>, func: &'b mut Function<'a>, scopes: &'b mut Scopes<'a>) -> Result<Block<'a>> {
         scopes.push();
-        for param in &decl.params {
-            let var = func.variables.insert(Variable { ty: param.ty.clone() });
+        for param in decl.params {
+            let var = func.variables.insert(Variable { ty: param.ty });
             scopes.add_var(param.name, var);
         }
 
@@ -136,7 +137,7 @@ impl<'a> Program<'a> {
         }
 
         if let Some(expr) = &body.1 {
-            let tmp = self.parse_expr_into_tmp(expr, func, &mut env, scopes)?;
+            let tmp = self.parse_expr_into_value(expr, func, &mut env, scopes)?;
             env.stmts.push(Statement::Do(Expr::Return(Some(tmp))));
         }
 
@@ -144,7 +145,7 @@ impl<'a> Program<'a> {
         Ok(env)
     }
 
-    fn parse_statement<'b>(&'b self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<()> {
+    fn parse_statement<'b>(&mut self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<()> {
         match node {
             Ast::Declare { var, ty, value, span: _ } => {
                 // evaluate value before adding the variable to scope
@@ -167,14 +168,7 @@ impl<'a> Program<'a> {
                             .ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "assigned to here"))?;
                         Statement::Assign(var, value)
                     }
-                    ast::LValue::Deref(expr) => if let Ast::Id(name, span) = &**expr {
-                        Statement::DerefAssign(scopes.var(name)
-                            .ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "used here"))?,
-                            value
-                        )
-                    } else {
-                        Statement::DerefAssign(self.parse_expr_into_tmp(expr, func, env, scopes)?, value)
-                    }
+                    ast::LValue::Deref(expr) => Statement::DerefAssign(self.parse_expr_into_value(expr, func, env, scopes)?, value),
                     ast::LValue::Index(_array, _index) => Err(Error::new("TODO: implement indexing").with_label(*span, "used here"))?
                 };
                 env.stmts.push(statement);
@@ -225,19 +219,13 @@ impl<'a> Program<'a> {
         Ok(())
     }
 
-    fn parse_expr<'b>(&self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<Expr<'a>> {
+    fn parse_expr<'b>(&mut self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<Expr<'a>> {
         let expr = match node {
-            Ast::Id(name, span) => Expr::Var(scopes.var(name).ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "used here"))?),
-            &Ast::Num(num, _) => Expr::Num(num),
-            Ast::Literal(str, _) => Expr::Literal(str.clone()),
-            Ast::Shorthand(span) => {
-                Expr::Var(scopes.shorthand().ok_or(
-                    Error::new("using a shorthand when not inside of a pipeline expression").with_label(*span, "appeared here")
-                )?)
+            Ast::Id(..) | Ast::Num(..) | Ast::Literal(..) | Ast::Shorthand(..) | Ast::Uninit(..) => {
+                Expr::Value(self.parse_expr_into_value(node, func, env, scopes)?)
             }
-            Ast::Uninit(_) => Expr::Uninit,
             Ast::UnaryExpr(op, expr, _) => {
-                let expr = self.parse_expr_into_tmp(expr, func, env, scopes)?;
+                let expr = self.parse_expr_into_value(expr, func, env, scopes)?;
                 // pretty stupid but future unary operations might need desugaring
                 let op = match op {
                     ast::UnaryOp::Deref     => UnaryOp::Deref,
@@ -252,7 +240,7 @@ impl<'a> Program<'a> {
                     Error::new("TODO: range struct and range syntax").with_label(*span, "used here")
                 )?,
                 ast::BinOp::Pipe => {
-                    let a = self.parse_expr_into_tmp(a, func, env, scopes)?;
+                    let a = self.parse_expr_into_value(a, func, env, scopes)?;
                     scopes.push_shorthand(a);
 
                     let b = self.parse_expr(b, func, env, scopes)?;
@@ -260,8 +248,8 @@ impl<'a> Program<'a> {
                     b
                 }
                 op => {
-                    let a = self.parse_expr_into_tmp(a, func, env, scopes)?;
-                    let b = self.parse_expr_into_tmp(b, func, env, scopes)?;
+                    let a = self.parse_expr_into_value(a, func, env, scopes)?;
+                    let b = self.parse_expr_into_value(b, func, env, scopes)?;
                     macro_rules! map_op {
                         ($op:expr, $($name:ident),* ; $($unreach:ident),*) => {
                             match $op {
@@ -284,7 +272,7 @@ impl<'a> Program<'a> {
             Ast::Access(a, field, span) => {
                 if let Ast::Id(var, _) = &**a {
                     if let Some(var) = scopes.var(var) { // acessing local variable
-                        Expr::FieldAccess(var, field)
+                        Expr::FieldAccess(Value::Var(var), field)
                     } else { // acessing type constant
                         let ty = self.type_decls.get(var).copied().ok_or(Error::new(format!("variable/type not declared: {var}")).with_label(*span, "used here"))?;
                         match &self.types[ty] {
@@ -296,7 +284,7 @@ impl<'a> Program<'a> {
                         Expr::PathAccess(ty, field)
                     }
                 } else {
-                    let var = self.parse_expr_into_tmp(a, func, env, scopes)?;
+                    let var = self.parse_expr_into_value(a, func, env, scopes)?;
                     Expr::FieldAccess(var, field)
                 }
             },
@@ -305,21 +293,21 @@ impl<'a> Program<'a> {
                 let v = func.variables.insert(Variable { ty: Type::Undeclared });
                 let block = self.parse_block(block, func, scopes, 
                     |expr| Ok(expr.map(|expr| Statement::Assign(v, expr))
-                        .or(Some(Statement::Assign(v, Expr::Unit)))
+                        .or(Some(Statement::Assign(v, Value::Unit.into())))
                     )
                 )?;
                 env.stmts.push(Statement::Block(block));
 
-                Expr::Var(v)
+                Value::Var(v).into()
             },
             Ast::FuncCall { name, args, span } => {
+                // make sure args are processed in the same order they are specified
+                let mut args: VecDeque<_> = args.iter().map(|(name, expr, span)| Ok((name, self.parse_expr_into_value(expr, func, env, scopes)?, *span))).collect::<Result<_>>()?;
+                let mut ordered_args = Vec::new();
+
                 let decl = self.function_decls.get(name).ok_or(
                     Error::new(format!("unknown function {name}")).with_label(*span, "called here")
                 )?;
-
-                // make sure args are processed in the same order they are specified
-                let mut args: VecDeque<_> = args.iter().map(|(name, expr, span)| Ok((name, self.parse_expr_into_tmp(expr, func, env, scopes)?, *span))).collect::<Result<_>>()?;
-                let mut ordered_args = Vec::new();
 
                 let num_args = args.len();
 
@@ -363,7 +351,7 @@ impl<'a> Program<'a> {
 
                 let last_map = |expr: Option<Expr<'a>>| Ok(
                     expr.map(|expr| Statement::Assign(v, expr))
-                        .or(Some(Statement::Assign(v, Expr::Unit)))
+                        .or(Some(Statement::Assign(v, Value::Unit.into())))
                 );
 
                 let cond = self.parse_expr(cond, func, env, scopes)?;
@@ -389,7 +377,7 @@ impl<'a> Program<'a> {
                     _ => unreachable!()
                 };
                 env.stmts.push(Statement::If { cond, block, else_block: Some(else_block) });
-                Expr::Var(v)
+                Value::Var(v).into()
             }
             Ast::LoopExpr(block, span) => {
                 // store return value
@@ -400,7 +388,7 @@ impl<'a> Program<'a> {
                 scopes.pop_loop();
 
                 env.stmts.push(Statement::Loop(block));
-                Expr::Var(v)
+                Value::Var(v).into()
             }
             Ast::Break(expr, span) => {
                 let expr = expr.as_ref().map(|expr| self.parse_expr(expr, func, env, scopes)).transpose()?;
@@ -449,13 +437,27 @@ impl<'a> Program<'a> {
         Ok(expr)
     }
 
-    fn parse_expr_into_tmp<'b>(&self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<Var> {
-        let expr = self.parse_expr(node, func, env, scopes)?;
-        if let Expr::Var(v) = expr { return Ok(v) } // avoid unnecessary temporary
+    fn parse_expr_into_value<'b>(&mut self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<Value> {
+        let value = match node {
+            Ast::Id(name, span) => Value::Var(scopes.var(name).ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "used here"))?),
+            &Ast::Num(num, _) => Value::Num(num),
+            Ast::Literal(str, _) => Value::Literal(self.literals.insert(str.clone())),
+            Ast::Shorthand(span) => {
+                scopes.shorthand().ok_or(
+                    Error::new("using a shorthand when not inside of a pipeline expression").with_label(*span, "appeared here")
+                )?
+            }
+            Ast::Uninit(_) => Value::Uninit,
+            node => {
+                let expr = self.parse_expr(node, func, env, scopes)?;
+                if let Expr::Value(value) = expr { return Ok(value) } // avoid unnecessary temporary
 
-        let var = func.variables.insert(Variable { ty: Type::Undeclared });
-        env.stmts.push(Statement::Assign(var, expr));
-        Ok(var)
+                let var = func.variables.insert(Variable { ty: Type::Undeclared });
+                env.stmts.push(Statement::Assign(var, expr));
+                Value::Var(var)
+            }
+        };
+        Ok(value)
     }
 
     /// parses a block
@@ -463,7 +465,7 @@ impl<'a> Program<'a> {
     /// doesn't require a reference to the current environment (since it creates one by itself)
     /// `last_map` specifies what to do with the last expression in the block
     fn parse_block<'b>(
-        &self,
+        &mut self,
         block: &'a ast::Block<'a>,
         func: &'b mut Function<'a>,
         scopes: &'b mut Scopes<'a>,

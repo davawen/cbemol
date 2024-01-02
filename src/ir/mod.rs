@@ -8,6 +8,7 @@ pub mod display;
 new_key_type! {
     pub struct TypeKey; 
     struct FuncKey;
+    struct LiteralKey;
     struct Var;
 }
 
@@ -15,8 +16,9 @@ new_key_type! {
 pub struct Program<'a> {
     function_decls: HashMap<&'a str, FunctionDecl<'a>>,
     functions: SlotMap<FuncKey, Function<'a>>,
-    pub type_decls: HashMap<&'a str, TypeKey>,
-    pub types: SlotMap<TypeKey, UserType<'a>>
+    type_decls: HashMap<&'a str, TypeKey>,
+    types: SlotMap<TypeKey, UserType<'a>>,
+    literals: SlotMap<LiteralKey, String>
 }
 
 #[derive(Debug)]
@@ -60,14 +62,14 @@ pub enum Type {
     Undeclared
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FunctionDecl<'a> {
     ret: Type,
     params: Vec<Param<'a>>,
     key: FuncKey
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Param<'a> {
     outward_name: Option<&'a str>,
     name: &'a str,
@@ -97,7 +99,7 @@ enum Statement<'a> {
     /// Assigns the value of expr to a variable
     Assign(Var, Expr<'a>),
     /// Assigns the value of expr to the location in memory pointed to by a variable
-    DerefAssign(Var, Expr<'a>),
+    DerefAssign(Value, Expr<'a>),
     Do(Expr<'a>),
     Block(Block<'a>),
     If {
@@ -108,21 +110,32 @@ enum Statement<'a> {
     Loop(Block<'a>)
 }
 
-#[derive(Debug)]
-enum Expr<'a> {
+#[derive(Debug, Clone, Copy)]
+enum Value {
     Var(Var),
     Num(i32),
-    Literal(String),
+    Literal(LiteralKey),
     Uninit,
-    Unit,
-    FieldAccess(Var, &'a str),
+    Unit
+}
+
+#[derive(Debug)]
+enum Expr<'a> {
+    Value(Value),
+    FieldAccess(Value, &'a str),
     PathAccess(TypeKey, &'a str),
-    FuncCall(FuncKey, Vec<Var>),
-    Return(Option<Var>),
+    FuncCall(FuncKey, Vec<Value>),
+    Return(Option<Value>),
     Break,
     Continue,
-    BinOp(Var, BinOp, Var),
-    UnaryOp(UnaryOp, Var)
+    BinOp(Value, BinOp, Value),
+    UnaryOp(UnaryOp, Value)
+}
+
+impl From<Value> for Expr<'_> {
+    fn from(value: Value) -> Self {
+        Expr::Value(value)
+    }
 }
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ir::Var;
+use crate::ir::{Var, Value};
 
 pub struct LoopScope {
     /// output variable if the loop is used in an expression
@@ -15,7 +15,7 @@ pub struct Scopes<'a> {
     /// stack of defined variable scopes (blocks)
     variable_scopes: Vec<HashMap<&'a str, Var>>,
     /// stack of shorthands used in pipelines
-    shorthands: Vec<Var>,
+    shorthands: Vec<Value>,
     /// stack of the loops we are in
     loop_scopes: Vec<LoopScope>
 }
@@ -51,7 +51,7 @@ impl<'a> Scopes<'a> {
     }
 
     /// add a shorthand (entering pipeline expression)
-    pub fn push_shorthand(&mut self, var: Var) {
+    pub fn push_shorthand(&mut self, var: Value) {
         self.shorthands.push(var);
     }
 
@@ -61,7 +61,7 @@ impl<'a> Scopes<'a> {
     }
 
     /// get the current shorthand
-    pub fn shorthand(&self) -> Option<Var> {
+    pub fn shorthand(&self) -> Option<Value> {
         self.shorthands.last().copied()
     }
 
