@@ -164,7 +164,7 @@ impl std::fmt::Display for BinOp {
         use BinOp as O;
         let s = match self {
             O::Add => "+", O::Sub => "-", O::Mul => "*", O::Div => "/", O::Mod => "%",
-            O::BinAnd => "&&", O::BinOr => "||", O::BinXor => "^^",
+            O::LogicAnd => "&&", O::LogicOr => "||", O::LogicXor => "^^",
             O::And => "&", O::Or => "|", O::Xor => "^",
             O::Eq => "==", O::Ne => "!=", O::Gt => ">", O::Ge => ">=", O::Lt => "<", O::Le => "<=",
             O::Range => "..",

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use slotmap::{SlotMap, new_key_type};
+use slotmap::{SlotMap, new_key_type, SecondaryMap};
 
 pub mod lower;
 pub mod display;
+pub mod typecheck;
 
 new_key_type! {
     pub struct TypeKey; 
@@ -14,15 +15,16 @@ new_key_type! {
 
 #[derive(Default, Debug)]
 pub struct Program<'a> {
-    function_decls: HashMap<&'a str, FunctionDecl<'a>>,
+    function_names: HashMap<&'a str, FuncKey>,
     functions: SlotMap<FuncKey, Function<'a>>,
+    function_decls: SecondaryMap<FuncKey, FunctionDecl<'a>>,
     type_decls: HashMap<&'a str, TypeKey>,
-    types: SlotMap<TypeKey, UserType<'a>>,
+    types: SlotMap<TypeKey, DirectType<'a>>,
     literals: SlotMap<LiteralKey, String>
 }
 
 #[derive(Debug)]
-pub enum UserType<'a> {
+pub enum DirectType<'a> {
     Struct {
         fields: Vec<(&'a str, Type)>
     },
@@ -32,6 +34,17 @@ pub enum UserType<'a> {
     Enum {
         variants: Vec<(&'a str, i32)>
     },
+    Type(Type)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrimitiveType {
+    I32, F32, Bool, U8
+}
+
+#[derive(Clone, Debug)]
+pub enum Type {
+    Direct(TypeKey),
     Primitive(PrimitiveType),
     /// `---`
     Uninit,
@@ -39,34 +52,23 @@ pub enum UserType<'a> {
     Unit,
     /// type of `break`, `continue` and `return` expressions
     /// can be cast to any type
-    Never
-}
-
-#[derive(Debug)]
-pub enum PrimitiveType {
-    I32, F32
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Type {
-    Direct(TypeKey),
+    Never,
+    /// The type is yet unknown, but should get determined during type checking
+    /// Using a variable with an undeclared type is an immediate compilation error (and should in theory never happen)
+    Undeclared,
     Ptr(Box<Type>),
     Slice(Box<Type>),
     Array { ty: Box<Type>, len: i32 },
     Func {
         ret: Box<Type>,
         params: Vec<Type>
-    },
-    /// The type is yet unknown, but should get determined during type checking
-    /// Using a variable with an undeclared type is an immediate compilation error (and should in theory never happen)
-    Undeclared
+    }
 }
 
 #[derive(Debug, Clone)]
 struct FunctionDecl<'a> {
     ret: Type,
-    params: Vec<Param<'a>>,
-    key: FuncKey
+    params: Vec<Param<'a>>
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +79,7 @@ struct Param<'a> {
     // value: Option<()>
 }
 
-#[derive(Debug, Default)]
+#[derive(Default, Debug)]
 struct Function<'a> {
     variables: SlotMap<Var, Variable>,
     body: Block<'a>
@@ -144,7 +146,7 @@ enum UnaryOp { AddressOf, Deref, Negate, Not }
 #[derive(Debug)]
 enum BinOp { 
     Add, Sub, Mul, Div, Mod,
-    BinAnd, BinOr, BinXor,
+    LogicAnd, LogicOr, LogicXor,
     And, Or, Xor,
     Eq, Ne, Gt, Ge, Lt, Le
 }

@@ -41,15 +41,17 @@ impl<'a> Program<'a> {
     }
 
     fn parse_type_decls(&mut self, program: &[Ast<'a>]) -> Result<()> {
-        self.type_decls.insert("void", self.types.insert(UserType::Unit));
-        self.type_decls.insert("i32",  self.types.insert(UserType::Primitive(PrimitiveType::I32)));
-        self.type_decls.insert("f32",  self.types.insert(UserType::Primitive(PrimitiveType::F32)));
+        self.type_decls.insert("void", self.types.insert(DirectType::Type(Type::Unit)));
+        self.type_decls.insert("u8",  self.types.insert(DirectType::Type(Type::Primitive(PrimitiveType::U8))));
+        self.type_decls.insert("i32",  self.types.insert(DirectType::Type(Type::Primitive(PrimitiveType::I32))));
+        self.type_decls.insert("f32",  self.types.insert(DirectType::Type(Type::Primitive(PrimitiveType::F32))));
+        self.type_decls.insert("bool", self.types.insert(DirectType::Type(Type::Primitive(PrimitiveType::Bool))));
 
         // parse types
         for decl in program {
             match decl {
                 &Ast::StructDef { name, .. } | &Ast::UnionDef { name, .. } | &Ast::EnumDef { name, .. } => {
-                    let handle = self.types.insert(UserType::Never); // placeholder
+                    let handle = self.types.insert(DirectType::Type(Type::Undeclared)); // placeholder
                     self.type_decls.insert(name, handle);
                 }
                 _ => ()
@@ -62,20 +64,20 @@ impl<'a> Program<'a> {
         for decl in program {
             match decl {
                 Ast::StructDef { name, fields, span: _ } => {
-                    let ty = UserType::Struct {
+                    let ty = DirectType::Struct {
                         fields: fields.iter().map(|(ty, name)| Ok((*name, self.parse_type(ty)?))).collect::<Result<_>>()?
                     };
                     self.types[self.type_decls[name]] = ty;
                 }
                 Ast::UnionDef { name, variants, span: _ } => {
-                    let ty = UserType::Union {
+                    let ty = DirectType::Union {
                         variants: variants.iter().map(|(ty, name)| Ok((*name, self.parse_type(ty)?))).collect::<Result<_>>()?
                     };
                     self.types[self.type_decls[name]] = ty;
                 }
                 Ast::EnumDef { name, variants, span: _ } => {
                     let mut count = 0;
-                    let ty = UserType::Enum {
+                    let ty = DirectType::Enum {
                         variants: variants.iter().map(|(name, value)| {
                             if let &Some(value) = value { count = value; }
                             let value = count;
@@ -86,8 +88,7 @@ impl<'a> Program<'a> {
                     self.types[self.type_decls[name]] = ty;
                 }
                 Ast::FunctionDef { name, ret, params, body: _, span: _ } => {
-                    let handle = self.functions.insert(Function::default());
-                    self.function_decls.insert(name, FunctionDecl {
+                    let decl = FunctionDecl {
                         ret: self.parse_type(ret)?,
                         params: params.iter().map(|param| {
                             if let Some(value) = &param.value {
@@ -99,8 +100,11 @@ impl<'a> Program<'a> {
                                 outward_name: param.outward_name
                             })
                         }).collect::<Result<_>>()?,
-                        key: handle
-                    });
+                    };
+
+                    let handle = self.functions.insert(Function::default());
+                    self.function_decls.insert(handle, decl);
+                    self.function_names.insert(name, handle);
                 }
                 _ => ()
        }
@@ -111,12 +115,12 @@ impl<'a> Program<'a> {
     fn parse_funcs(&mut self, program: &'a [Ast<'a>]) -> Result<()> {
         for decl in program {
             if let Ast::FunctionDef { name, body, span: _, .. } = decl {
-                let decl = self.function_decls[name].clone();
-                let key = decl.key;
+                let key = self.function_names[name];
 
                 let mut func = Function::default();
                 let mut scopes = Scopes::new();
-                func.body = self.parse_func(body, decl, &mut func, &mut scopes)?;
+                func.body = self.parse_func(key, body, &mut func, &mut scopes)?;
+
                 self.functions[key] = func;
             }
         }
@@ -124,10 +128,10 @@ impl<'a> Program<'a> {
         Ok(())
     }
 
-    fn parse_func<'b>(&mut self, body: &'a ast::Block<'a>, decl: FunctionDecl<'a>, func: &'b mut Function<'a>, scopes: &'b mut Scopes<'a>) -> Result<Block<'a>> {
+    fn parse_func<'b>(&mut self, key: FuncKey, body: &'a ast::Block<'a>, func: &'b mut Function<'a>, scopes: &'b mut Scopes<'a>) -> Result<Block<'a>> {
         scopes.push();
-        for param in decl.params {
-            let var = func.variables.insert(Variable { ty: param.ty });
+        for param in &self.function_decls[key].params {
+            let var = func.variables.insert(Variable { ty: param.ty.clone() });
             scopes.add_var(param.name, var);
         }
 
@@ -260,7 +264,7 @@ impl<'a> Program<'a> {
                     }
                     let op = map_op! { op, 
                         Add, Sub, Mul, Div, Mod,
-                        BinAnd, BinOr, BinXor,
+                        LogicAnd, LogicOr, LogicXor,
                         And, Or, Xor,
                         Eq, Ne, Gt, Ge, Lt, Le;
                         Range,
@@ -276,7 +280,7 @@ impl<'a> Program<'a> {
                     } else { // acessing type constant
                         let ty = self.type_decls.get(var).copied().ok_or(Error::new(format!("variable/type not declared: {var}")).with_label(*span, "used here"))?;
                         match &self.types[ty] {
-                            UserType::Enum { variants } => if !variants.iter().any(|(name, _)| name == field) {
+                            DirectType::Enum { variants } => if !variants.iter().any(|(name, _)| name == field) {
                                 Err(Error::new(format!("enumeration does not contain member {field}")).with_label(*span, "accessed here"))?
                             }
                             _ => Err(Error::new(format!("cannot access member of type {var}")).with_label(*span, "accessed here"))?
@@ -305,9 +309,10 @@ impl<'a> Program<'a> {
                 let mut args: VecDeque<_> = args.iter().map(|(name, expr, span)| Ok((name, self.parse_expr_into_value(expr, func, env, scopes)?, *span))).collect::<Result<_>>()?;
                 let mut ordered_args = Vec::new();
 
-                let decl = self.function_decls.get(name).ok_or(
+                let key = *self.function_names.get(name).ok_or(
                     Error::new(format!("unknown function {name}")).with_label(*span, "called here")
                 )?;
+                let decl = &self.function_decls[key];
 
                 let num_args = args.len();
 
@@ -343,7 +348,7 @@ impl<'a> Program<'a> {
                         .with_label(span, "given here"))?
                 }
 
-                Expr::FuncCall(decl.key, ordered_args)
+                Expr::FuncCall(key, ordered_args)
             },
             Ast::IfExpr { cond, block, else_branch, span } => {
                 // store return value

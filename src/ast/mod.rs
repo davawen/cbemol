@@ -154,7 +154,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone)]
 pub enum BinOp {
     Add, Sub, Mul, Div, Mod,
-    BinAnd, BinOr, BinXor,
+    LogicAnd, LogicOr, LogicXor,
     And, Or, Xor,
     Eq, Ne, Gt, Ge, Lt, Le,
     Range,
@@ -300,9 +300,9 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
             infix(left(1), just(Token::Eq), |l, _, r, s| op!(l, Eq, r, s)),
             infix(left(1), just(Token::Ne), |l, _, r, s| op!(l, Ne, r, s)),
 
-            infix(left(0), just(Token::DoubleAmpersand), |l, _, r, s| op!(l, BinAnd, r, s)),
-            infix(left(0), just(Token::DoublePipe),      |l, _, r, s| op!(l, BinOr, r, s)),
-            infix(left(0), just(Token::DoubleCaret),     |l, _, r, s| op!(l, BinXor, r, s)),
+            infix(left(0), just(Token::DoubleAmpersand), |l, _, r, s| op!(l, LogicAnd, r, s)),
+            infix(left(0), just(Token::DoublePipe),      |l, _, r, s| op!(l, LogicOr, r, s)),
+            infix(left(0), just(Token::DoubleCaret),     |l, _, r, s| op!(l, LogicXor, r, s)),
         )));
 
         let lvalue = choice((

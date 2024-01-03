@@ -43,6 +43,14 @@ impl CompilerError for ir::lower::Error {
     }
 }
 
+impl CompilerError for ir::typecheck::Error {
+    fn span(&self) -> SimpleSpan { SimpleSpan::splat(0) }
+    fn message(&self) -> String { self.0.clone() }
+    fn labels(self, _filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
+        vec![]
+    }
+}
+
 fn show_errs(src: &str, filename: &str, errs: Vec<impl CompilerError>) {
     let mut cache = (filename, src.into());
 
@@ -104,16 +112,11 @@ Vec2 Vec2(x: i32 x, y: i32 y) {
     self
 }
 
-void printf(msg: i32 x) {
-    // do stuff
-}
-
 void main() {
     i32 a = 0;
-    i32 rest = loop {
-        if a > 10 { break a*2 }
-        a = a + 1;
-    };
+    bool b;
+    i32 c = a + b;
+    i32& d = &a;
 }
     "#;
 
@@ -133,13 +136,18 @@ void main() {
     }
 
     let p = ir::Program::lower(&parsed);
-    let p = match p {
+    let mut p = match p {
         Ok(p) => p,
         Err(e) => {
             show_errs(input, "stdin", vec![e]);
             return;
         }
     };
-
     println!("{p}");
+
+    let type_errs = p.typecheck();
+    if !type_errs.is_empty() {
+        show_errs(input, "stdin", type_errs);
+    }
+    // println!("{p}");
 }

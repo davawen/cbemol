@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use super::{Program, Block, Statement, Expr, UnaryOp, BinOp, Type, UserType, PrimitiveType, Function, Value};
+use super::{Program, Block, Statement, Expr, UnaryOp, BinOp, Type, DirectType, PrimitiveType, Function, Value};
 
 /// permits drilling the Program struct through the Display trait
 struct WithProgram<'a, T>(&'a T, &'a Program<'a>);
@@ -20,27 +20,25 @@ impl Display for Program<'_> {
             writeln!(f, "{name} -> {key:?}: {ty}")?;
         }
 
-        for (name, decl) in &self.function_decls {
-            let func = &self.functions[decl.key];
+        for (name, &key) in &self.function_names {
+            let func = &self.functions[key];
+            let decl = &self.function_decls[key];
             write!(f, "{} {name} (", decl.ret)?;
             for param in &decl.params {
                 write!(f, "{}, ", param.ty)?;
             }
-            writeln!(f, ") -> {:?}:\n{}", decl.key, func.with(self))?;
+            writeln!(f, ") -> {:?}:\n{}", key, func.with(self))?;
         }
 
         Ok(())
     }
 }
 
-impl Display for UserType<'_> {
+impl Display for DirectType<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use UserType as Ty;
+        use DirectType as Ty;
         match self {
-            Ty::Unit => write!(f, "void"),
-            Ty::Never => write!(f, "never"),
-            Ty::Uninit => write!(f, "---"),
-            Ty::Primitive(ty) => write!(f, "{ty}"),
+            Ty::Type(ty) => write!(f, "{ty}"),
             Ty::Struct { fields } => {
                 writeln!(f, "struct {{")?;
                 for (field, ty) in fields {
@@ -75,6 +73,10 @@ impl Display for Type {
             Ty::Ptr(ty) => write!(f, "{ty}&"),
             Ty::Array { ty, len } => write!(f, "{ty}[{len}]"),
             Ty::Slice(ty) => write!(f, "{ty}[]"),
+            Ty::Unit => write!(f, "void"),
+            Ty::Never => write!(f, "never"),
+            Ty::Uninit => write!(f, "---"),
+            Ty::Primitive(ty) => write!(f, "{ty}"),
             Ty::Func { ret, params } => {
                 write!(f, "{ret}(")?;
                 for param in params {
@@ -91,7 +93,9 @@ impl Display for PrimitiveType {
         use PrimitiveType as Ty;
         let s = match self {
             Ty::I32 => "i32",
-            Ty::F32 => "f32"
+            Ty::F32 => "f32",
+            Ty::Bool => "bool",
+            Ty::U8 => "u8"
         };
         write!(f, "{s}")
     }
@@ -197,7 +201,7 @@ impl Display for BinOp {
         use BinOp as O;
         let s = match self {
             O::Add => "+", O::Sub => "-", O::Mul => "*", O::Div => "/", O::Mod => "%",
-            O::BinAnd => "&&", O::BinOr => "||", O::BinXor => "^^",
+            O::LogicAnd => "&&", O::LogicOr => "||", O::LogicXor => "^^",
             O::And => "&", O::Or => "|", O::Xor => "^",
             O::Eq => "==", O::Ne => "!=", O::Gt => ">", O::Ge => ">=", O::Lt => "<", O::Le => "<="
         };
