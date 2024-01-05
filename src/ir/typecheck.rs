@@ -111,12 +111,45 @@ impl<'a> Block<'a> {
                         (Ok(value_ty), Ok(_)) => {
                             errs.push(Error::new(format!("expected a pointer, got {value_ty}")).with_label(value.span(), "this lvalue"));
                         }
-                        (value, expr) => {
-                            if let Err(e) = value { errs.extend(e) }
-                            if let Err(e) = expr  { errs.extend(e) }
+                        (v, e) => {
+                            if let Err(e) = v { errs.extend(e) }
+                            if let Err(e) = e { errs.extend(e) }
                         }
                     }
-                },
+                }
+                Statement::FieldAssign { object, field, value, span: _ } => {
+                    let object_ty = object.typecheck(state);
+                    let value_ty = value.typecheck(state);
+                    match (object_ty, value_ty) {
+                        (Ok(object_ty), Ok(value_ty)) => match object_ty {
+                            Type::Direct(key) if matches!(state.types[key], DirectType::Struct { .. }) => {
+                                let DirectType::Struct { fields } = &state.types[key] else { unreachable!() };
+                                if let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) {
+                                    if !field_ty.same_as(&value_ty) {
+                                        errs.push(
+                                            Error::new(format!("expected type {field_ty}, found {value_ty}"))
+                                                .with_label(object.span(), format!("field {field} has type {field_ty}"))
+                                                .col().with_label(value.span(), format!("this has type {value_ty}"))
+                                        );
+                                    }
+                                } else { 
+                                    errs.push(
+                                        Error::new(format!("field {field} does not exist on struct"))
+                                            .with_label(object.span(), "in this expression")
+                                    );
+                                }
+                            }
+                            _ => errs.push(
+                                Error::new("expected object to be a struct")
+                                    .with_label(object.span(), format!("this has type {object_ty}"))
+                            )
+                        }
+                        (o, v) => {
+                            if let Err(e) = o { errs.extend(e) }
+                            if let Err(e) = v { errs.extend(e) }
+                        }
+                    }
+                }
                 Statement::Do(expr) => if let Err(e) = expr.typecheck(state) {
                     errs.extend(e);
                 },

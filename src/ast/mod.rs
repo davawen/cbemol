@@ -137,7 +137,8 @@ pub struct Parameter<'inp> {
 pub enum LValue<'inp> {
     Id(&'inp str),
     Deref(BAst<'inp>),
-    Index(BAst<'inp>, BAst<'inp>)
+    Index(BAst<'inp>, BAst<'inp>),
+    Field(BAst<'inp>, &'inp str)
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +313,11 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
             just(Token::Star)
                 .ignore_then(box_expr.clone())
                 .map(LValue::Deref),
+            expr.clone()
+                .filter(|expr| matches!(expr, Ast::Access(..)))
+                .map(|expr| if let Ast::Access(expr, field, _) = expr {
+                    LValue::Field(expr, field)
+                } else { unreachable!() }),
             id.map(LValue::Id)
         ));
 

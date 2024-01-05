@@ -143,7 +143,8 @@ impl std::fmt::Display for LValue<'_> {
         match self {
             L::Id(id) => write!(f, "{id}"),
             L::Deref(l) => write!(f, "*{l}"),
-            L::Index(l, i) => write!(f, "{l}[{i}]")
+            L::Index(l, i) => write!(f, "{l}[{i}]"),
+            L::Field(e, field) => write!(f, "{e}.{field}")
         }
     }
 }

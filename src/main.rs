@@ -18,9 +18,8 @@ struct Vec2 {
 void print(msg: u8[] str) {}
 
 void main() {
-    i32 x = 0;
-    i32* y = &x;
-    *y = "string";
+    Vec2 v;
+    v.x = "test";
 }
     "#;
 

@@ -138,6 +138,7 @@ impl Display for WithProgram<'_, Statement<'_>> {
             Statement::Do(e) => writeln!(f, "DO {}", e.with(self.1)),
             Statement::Assign(var, e, _) => writeln!(f, "{var:?} = {}", e.with(self.1)),
             Statement::DerefAssign(var, e, _) => writeln!(f, "*{} = {}", var.with(self.1), e.with(self.1)),
+            Statement::FieldAssign { object, field, value, span: _ } => writeln!(f, "{}.{field} = {}", object.with(self.1), value.with(self.1)),
             Statement::Block(b, _) => writeln!(f, "{}", b.with(self.1)),
             Statement::If { cond, block, else_block: Some(else_block), span: _ } => writeln!(f, "IF {} THEN {} ELSE {}", cond.with(self.1), block.with(self.1), else_block.with(self.1)),
             Statement::If { cond, block, else_block: None, span: _ } => writeln!(f, "IF {} THEN {}", cond.with(self.1), block.with(self.1)),

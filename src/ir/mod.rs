@@ -103,7 +103,14 @@ enum Statement<'a> {
     /// Assigns the value of expr to a variable
     Assign(Var, Expr<'a>, Span),
     /// Assigns the value of expr to the location in memory pointed to by a variable
-    DerefAssign(Value, Expr<'a>, Span),
+    DerefAssign(Expr<'a>, Expr<'a>, Span),
+    /// Assigns the value of an expr into the field of a struct
+    FieldAssign {
+        object: Expr<'a>,
+        field: &'a str,
+        value: Expr<'a>,
+        span: Span
+    },
     Do(Expr<'a>),
     Block(Block<'a>, Span),
     If {
@@ -135,6 +142,38 @@ enum Expr<'a> {
     Continue(Span),
     BinOp(Value, BinOp, Value, Span),
     UnaryOp(UnaryOp, Value, Span)
+}
+
+#[derive(Debug)]
+enum UnaryOp { AddressOf, Deref, Negate, Not }
+
+#[derive(Debug)]
+enum BinOp { 
+    Add, Sub, Mul, Div, Mod,
+    LogicAnd, LogicOr, LogicXor,
+    And, Or, Xor,
+    Eq, Ne, Gt, Ge, Lt, Le
+}
+
+impl Block<'_> {
+    /// panics if the block contains no statements
+    fn last_expr_span(&self) -> Span {
+        self.stmts.last().expect("at least one statement").span()
+    }
+}
+
+impl Statement<'_> {
+    fn span(&self) -> Span {
+        match self {
+            &Statement::Assign(_, _, span) => span,
+            &Statement::DerefAssign(_, _, span) => span,
+            &Self::FieldAssign { span, .. } => span,
+            Statement::Do(expr) => expr.span(),
+            &Statement::Block(_, span) => span,
+            &Statement::If { span, .. } => span,
+            &Statement::Loop(_, span) => span,
+        }
+    }
 }
 
 impl Value {
@@ -177,15 +216,4 @@ impl Expr<'_> {
             &Expr::UnaryOp(_, _, span) => span,
         }
     }
-}
-
-#[derive(Debug)]
-enum UnaryOp { AddressOf, Deref, Negate, Not }
-
-#[derive(Debug)]
-enum BinOp { 
-    Add, Sub, Mul, Div, Mod,
-    LogicAnd, LogicOr, LogicXor,
-    And, Or, Xor,
-    Eq, Ne, Gt, Ge, Lt, Le
 }

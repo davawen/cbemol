@@ -154,7 +154,11 @@ impl<'a> Program<'a> {
                             .ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "assigned to here"))?;
                         Statement::Assign(var, value, *span)
                     }
-                    ast::LValue::Deref(expr) => Statement::DerefAssign(self.parse_expr_into_value(expr, func, env, scopes)?, value, *span),
+                    ast::LValue::Deref(expr) => Statement::DerefAssign(self.parse_expr(expr, func, env, scopes)?, value, *span),
+                    ast::LValue::Field(expr, field) => {
+                        let object = self.parse_expr(expr, func, env, scopes)?;
+                        Statement::FieldAssign { object, field, value, span: *span }
+                    }
                     ast::LValue::Index(_array, _index) => return Error::new("TODO: implement indexing").with_label(*span, "used here").err()
                 };
                 env.stmts.push(statement);
@@ -275,9 +279,11 @@ impl<'a> Program<'a> {
                         .or(Some(Statement::Assign(v, Value::Unit(span).expr(), span)))
                     )
                 )?;
+                let last_span = block.last_expr_span();
+
                 env.stmts.push(Statement::Block(block, span));
 
-                Value::Var(v, span).expr()
+                Value::Var(v, last_span).expr()
             },
             &Ast::FuncCall { ref name, ref args, span } => {
                 // make sure args are processed in the same order they are specified
