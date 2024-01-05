@@ -70,7 +70,7 @@ impl Display for Type {
         match self {
             Ty::Undeclared => write!(f, "undeclared"),
             Ty::Direct(ty) => write!(f, "{ty:?}"),
-            Ty::Ptr(ty) => write!(f, "{ty}&"),
+            Ty::Ptr(ty) => write!(f, "{ty}*"),
             Ty::Array { ty, len } => write!(f, "{ty}[{len}]"),
             Ty::Slice(ty) => write!(f, "{ty}[]"),
             Ty::Unit => write!(f, "void"),

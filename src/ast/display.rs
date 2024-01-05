@@ -123,7 +123,7 @@ impl std::fmt::Display for Type<'_> {
         use Type as T;
         match self {
             T::Id(id, _) => write!(f, "{id}"),
-            T::Pointer(ty, _) => write!(f, "{ty}&"),
+            T::Pointer(ty, _) => write!(f, "{ty}*"),
             T::FunctionPointer { ret, args, span: _ } => {
                 write!(f, "{ret}(")?;
                 for arg in args {

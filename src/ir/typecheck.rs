@@ -97,7 +97,7 @@ impl<'a> Block<'a> {
                         errs.push(Error::new(format!("expected type {}, found {}", var.ty, expr)).with_label(*span, "in assignment"));
                     }
                 }
-                Statement::DerefAssign(value, expr, span) => {
+                Statement::DerefAssign(value, expr, _span) => {
                     let value_ty = value.typecheck(state);
                     let expr_ty = expr.typecheck(state);
                     match (value_ty, expr_ty) {

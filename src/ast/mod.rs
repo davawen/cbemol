@@ -200,7 +200,7 @@ pub fn parser<'a>() -> impl Parser<'a, TInput<'a>, Vec<Ast<'a>>, Extra<'a>> {
     let literal = any().filter(|x| matches!(x, Token::StrLiteral(_))).map(|x| if let Token::StrLiteral(s) = x { s } else { unreachable!() });
 
     let ty = recursive(|ty| id.map_with_span(Type::Id).pratt((
-        postfix(3, just(Token::Ampersand),    |ty, _,     span| Type::Pointer(Box::new(ty), span)),
+        postfix(3, just(Token::Star),         |ty, _,     span| Type::Pointer(Box::new(ty), span)),
         postfix(2, in_brackets(num),          |ty, len,   span| Type::Array { ty: Box::new(ty), len, span }),
         postfix(2, in_brackets(empty()),      |ty, _,     span| Type::Slice(Box::new(ty), span)),
         postfix(1, in_parens(comma_list(ty)), |ret, args, span| Type::FunctionPointer { ret: Box::new(ret), args, span })

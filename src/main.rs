@@ -19,7 +19,7 @@ void print(msg: u8[] str) {}
 
 void main() {
     i32 x = 0;
-    i32& y = &x;
+    i32* y = &x;
     *y = "string";
 }
     "#;
@@ -48,8 +48,8 @@ void main() {
         }
     };
     let type_errs = p.typecheck();
+    println!("{p}");
     if !type_errs.is_empty() {
         show_errs(input, "stdin", type_errs);
     }
-    println!("{p}");
 }
