@@ -18,15 +18,9 @@ struct Vec2 {
 void print(msg: u8[] str) {}
 
 void main() {
-    i32 i = 0;
-    loop {
-        if i >= 100 { break }
-
-        if i % 15 == 0 { print(msg = "fizzbuzz") }
-        else if i % 3 == 0 { print(msg = "fizz") }
-        else if i % 5 == 0 { print(msg = "buzz") }
-        else { print(msg = "num") }
-    }
+    i32 x = 0;
+    i32& y = &x;
+    *y = "string";
 }
     "#;
 

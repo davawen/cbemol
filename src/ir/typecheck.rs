@@ -99,10 +99,14 @@ impl<'a> Block<'a> {
                 }
                 Statement::DerefAssign(value, expr, span) => {
                     let value_ty = value.typecheck(state);
-                    let expr = expr.typecheck(state);
-                    match (value_ty, expr) {
-                        (Ok(Type::Ptr(value)), Ok(expr)) => if !expr.same_as(&value) {
-                            errs.push(Error::new(format!("expected type {value}, found {expr}")).with_label(*span, "in assignment"));
+                    let expr_ty = expr.typecheck(state);
+                    match (value_ty, expr_ty) {
+                        (Ok(Type::Ptr(value_ty)), Ok(expr_ty)) => if !expr_ty.same_as(&value_ty) {
+                            errs.push(
+                                Error::new(format!("expected type {value_ty}, found {expr_ty}"))
+                                    .with_label(value.span(), format!("this has type {value_ty}"))
+                                    .col().with_label(expr.span(), format!("this has type {expr_ty}"))
+                            );
                         }
                         (Ok(value_ty), Ok(_)) => {
                             errs.push(Error::new(format!("expected a pointer, got {value_ty}")).with_label(value.span(), "this lvalue"));
@@ -118,10 +122,9 @@ impl<'a> Block<'a> {
                 },
                 Statement::Block(block, _) => errs.extend(block.typecheck(state)),
                 Statement::If { cond, block, else_block, span: _ } => {
-                    let cond_span = cond.span();
                     match cond.typecheck(state) {
                         Ok(Type::Primitive(PrimitiveType::Bool)) => (),
-                        Ok(ty) => errs.push(Error::new(format!("expected a boolean in condition of if statement, got {ty}")).with_label(cond_span, "in this condition")),
+                        Ok(ty) => errs.push(Error::new(format!("expected a boolean in condition of if statement, got {ty}")).with_label(cond.span(), "in this condition")),
                         Err(e) => errs.extend(e)
                     }
                     errs.extend(block.typecheck(state));
@@ -137,7 +140,7 @@ impl<'a> Block<'a> {
 }
 
 impl<'a> Expr<'a> {
-    fn typecheck<'b, 'c>(&'b mut self, state: &'c mut State<'a, 'b>) -> Result<Type> {
+    fn typecheck<'b, 'c>(&mut self, state: &'c mut State<'a, 'b>) -> Result<Type> {
         let ty = match self {
             Expr::Value(v) => v.typecheck(state)?,
             Expr::FieldAccess(value, field, span) => {
@@ -252,7 +255,7 @@ impl<'a> Expr<'a> {
 }
 
 impl Value {
-    fn typecheck<'b>(&'b self, state: &mut State<'_, 'b>) -> Result<Type> {
+    fn typecheck(&self, state: &mut State<'_, '_>) -> Result<Type> {
         let ty = match self {
             &Value::Var(v, span) => match state.vars[v].ty.clone() {
                 Type::Undeclared => return Error::new("cannot use variable whose type is undeclared").with_label(span, "originated from here").errs(),

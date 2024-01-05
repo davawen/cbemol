@@ -1,24 +1,33 @@
 use crate::ast::Span;
-use chumsky::{span::SimpleSpan, prelude::Rich};
+use chumsky::{span::{SimpleSpan, Span as SpanTrait}, prelude::Rich};
 use std::{fmt::{Display, Debug}, ops::Range};
 
-use ariadne::{Report, ReportKind, Label, Color};
+use ariadne::{Report, ReportKind, Label, Color, ColorGenerator};
 
 pub struct Error {
-    pub message: String,
-    pub label: Option<(Span, String)>
+    message: String,
+    labels: Vec<(Span, String, usize)>,
+    color_idx: usize
 }
 
 impl Error {
     pub fn new(message: impl ToString) -> Self {
         Self {
             message: message.to_string(),
-            label: None
+            labels: Vec::new(),
+            color_idx: 0
         }
     }
 
+    /// get a new color for the next label
+    pub fn col(mut self) -> Self {
+        self.color_idx += 1;
+        self
+    }
+
+    /// add a label to the error
     pub fn with_label(mut self, span: Span, message: impl ToString) -> Self {
-        self.label = Some((span, message.to_string()));
+        self.labels.push((span, message.to_string(), self.color_idx));
         self
     }
 
@@ -53,14 +62,20 @@ impl<T: Clone + Display + Debug> CompilerError for Rich<'_, T> {
 
 impl CompilerError for Error {
     fn span(&self) -> SimpleSpan {
-        self.label.as_ref().map(|x| x.0).unwrap_or(SimpleSpan::new(0, 0))
+        self.labels.iter().map(|(span, _, _)| *span).reduce(|acc, x| acc.union(x))
+            .unwrap_or(SimpleSpan::splat(0))
     }
+
     fn message(&self) -> String { self.message.clone() }
     fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
-        self.label.into_iter().map(|(span, message)| 
+        let mut gen = ColorGenerator::from_state([59400, 12309, 320], 0.5); // random state just to avoid the default ugly pink
+        let mut colors = vec![ Color::Red ];
+        colors.extend((0..self.color_idx).map(|_| gen.next()));
+
+        self.labels.into_iter().map(|(span, message, idx)| 
             Label::new((filename, span.into_range()))
                 .with_message(message)
-                .with_color(Color::Red)
+                .with_color(colors[idx])
         ).collect()
     }
 }
