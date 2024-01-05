@@ -10,19 +10,10 @@ impl Program<'_> {
     /// this method will fill out the type of undeclared variable (created during lowering),
     /// and check that the types specified everywhere in the program match up correctly
     pub fn typecheck(&mut self) -> Vec<Error> {
+        self.flatten();
+        
         let mut errs = vec![];
-        for (_, decl) in &mut self.function_decls {
-            take_mut::take(&mut decl.ret, |ret| ret.flatten(&self.types));
-            for param in &mut decl.params {
-                take_mut::take(&mut param.ty, |ty| ty.flatten(&self.types));
-            }
-        }
-
         for (key, func) in &mut self.functions {
-            for (_, var) in &mut func.variables {
-                take_mut::take(&mut var.ty, |ty| ty.flatten(&self.types));
-            }
-            
             errs.extend(func.body.typecheck(&mut State {
                 types: &self.types,
                 decls: &self.function_decls,
@@ -31,6 +22,45 @@ impl Program<'_> {
             }));
         }
         errs
+    }
+
+    /// flatten all types in the program
+    /// in user types, in function declarations, in variables
+    fn flatten(&mut self) {
+        use take_mut::take;
+
+        // flatten types
+        for key in self.types.keys().collect::<Vec<_>>() {
+            let mut ty = std::mem::replace(&mut self.types[key], DirectType::Struct { fields: Vec::new() }); // replace with empty struct
+            match &mut ty {
+                DirectType::Struct { fields } => for (_, field) in fields {
+                    take(field, |field| field.flatten(&self.types));
+                }
+                DirectType::Union { variants } => for (_, variant) in variants {
+                    take(variant, |variant| variant.flatten(&self.types));
+                }
+                DirectType::Type(Type::Direct(key)) => ty = self.types[*key].clone(),
+                _ => ()
+            }
+
+            // replace back
+            self.types[key] = ty;
+        }
+
+        // flatten declarations
+        for (_, decl) in &mut self.function_decls {
+            take(&mut decl.ret, |ret| ret.flatten(&self.types));
+            for param in &mut decl.params {
+                take(&mut param.ty, |ty| ty.flatten(&self.types));
+            }
+        }
+
+        // flatten variables
+        for (_, func) in &mut self.functions {
+            for (_, var) in &mut func.variables {
+                take(&mut var.ty, |ty| ty.flatten(&self.types));
+            }
+        }
     }
 }
 
@@ -68,18 +98,18 @@ impl<'a> Block<'a> {
                     }
                 }
                 Statement::DerefAssign(value, expr, span) => {
+                    let value_ty = value.typecheck(state);
                     let expr = expr.typecheck(state);
-                    let value = value.typecheck(state);
-                    match (expr, value) {
-                        (Ok(Type::Ptr(expr)), Ok(value)) => if !expr.same_as(&value) {
+                    match (value_ty, expr) {
+                        (Ok(Type::Ptr(value)), Ok(expr)) => if !expr.same_as(&value) {
                             errs.push(Error::new(format!("expected type {value}, found {expr}")).with_label(*span, "in assignment"));
                         }
-                        (Ok(expr), Ok(_)) => {
-                            errs.push(Error::new(format!("expected a pointer to a type, got {expr}")).with_label(*span, "here"));
+                        (Ok(value_ty), Ok(_)) => {
+                            errs.push(Error::new(format!("expected a pointer, got {value_ty}")).with_label(value.span(), "this lvalue"));
                         }
-                        (expr, value) => {
-                            if let Err(e) = expr  { errs.extend(e) }
+                        (value, expr) => {
                             if let Err(e) = value { errs.extend(e) }
+                            if let Err(e) = expr  { errs.extend(e) }
                         }
                     }
                 },
@@ -229,7 +259,7 @@ impl Value {
                 ty => ty
             },
             Value::Num(_, _) => Type::Primitive(PrimitiveType::I32),
-            Value::Literal(_, _) => Type::Ptr(Box::new(Type::Primitive(PrimitiveType::U8))),
+            Value::Literal(_, _) => Type::Slice(Box::new(Type::Primitive(PrimitiveType::U8))),
             Value::Uninit(_) => Type::Uninit,
             Value::Unit(_) => Type::Unit,
         };

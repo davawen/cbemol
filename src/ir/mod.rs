@@ -25,7 +25,7 @@ pub struct Program<'a> {
     literals: SlotMap<LiteralKey, String>
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum DirectType<'a> {
     Struct {
         fields: Vec<(&'a str, Type)>

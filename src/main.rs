@@ -10,56 +10,23 @@ mod error;
 
 fn main() {
     let input = r#"
-union OptionInt {
-    i32 some;
-    void none;
-}
-
-enum PieceKind {
-    None,
-    Pawn,
-    Bishop,
-    Knight = 4,
-    Rook = 8,
-    Queen = 16,
-    King = 32
-}
-
-struct Piece {
-    PieceKind kind;
-    i32 x;
-    i32 y;
-    OptionInt count;
-}
-
 struct Vec2 {
     i32 x;
     i32 y;
 }
 
-struct Vec3 {
-    Vec2 v;
-    i32 z;
-}
-
-Vec3 Vec3(v: Vec2 v, z: i32 z) {
-    Vec3 self;
-    // do stuff
-    self
-}
-
-Vec2 Vec2(x: i32 x, y: i32 y) {
-    Vec2 self;
-    // do stuff
-    self
-}
+void print(msg: u8[] str) {}
 
 void main() {
-    i32 a = 0;
-    bool b;
-    i32 c = a + b;
-    i32& d = &(&a);
-    *d = 10;
+    i32 i = 0;
+    loop {
+        if i >= 100 { break }
+
+        if i % 15 == 0 { print(msg = "fizzbuzz") }
+        else if i % 3 == 0 { print(msg = "fizz") }
+        else if i % 5 == 0 { print(msg = "buzz") }
+        else { print(msg = "num") }
+    }
 }
     "#;
 
@@ -86,11 +53,9 @@ void main() {
             return;
         }
     };
-    println!("{p}");
-
     let type_errs = p.typecheck();
     if !type_errs.is_empty() {
         show_errs(input, "stdin", type_errs);
     }
-    // println!("{p}");
+    println!("{p}");
 }
