@@ -155,15 +155,15 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token<'a>, SimpleSpan)>, ext
                         match c {
                             'n' => s.push('\n'),
                             '"' => s.push('"'),
-                            c => Err(<Rich<char> as chumsky::error::Error<&str>>::expected_found(
+                            c => return Err(<Rich<char> as chumsky::error::Error<&str>>::expected_found(
                                 [Some('n'.into()), Some('"'.into())],
                                 Some(c.into()),
                                 SimpleSpan::new(span.start + idx_a, span.start + idx_b + 1)
-                            ))?
+                            ))
                         }
                     } else {
                         let e = Rich::custom(SimpleSpan::new(span.start + idx_a, span.end + idx_a + 1), "expected escape code, found end of string");
-                        Err(e)? 
+                        return Err(e)
                     }
                     '"' => (), // string done
                     c => s.push(c)

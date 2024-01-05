@@ -1,70 +1,12 @@
-use std::{fmt::{Display, Debug}, ops::Range};
-
-use ariadne::{Report, ReportKind, Label, Color};
 use ast::parser;
-use chumsky::{Parser, prelude::{Input, Rich}, span::SimpleSpan};
+use chumsky::{Parser, prelude::Input};
 use lexer::lexer;
+use error::show_errs;
 
 mod lexer;
 mod ast;
 mod ir;
-
-trait CompilerError: Sized {
-    fn map(self) -> impl CompilerError { self }
-    fn span(&self) -> SimpleSpan;
-    fn message(&self) -> String;
-    fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>>;
-}
-
-impl<T: Clone + Display + Debug> CompilerError for Rich<'_, T> {
-    fn map(self) -> impl CompilerError { self.map_token(|c| c.to_string()) }
-    fn span(&self) -> SimpleSpan { *self.span() }
-    fn message(&self) -> String { self.to_string() }
-    fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
-        vec![
-            Label::new((filename, self.span().into_range()))
-                .with_message(format!("Expected: {:?}", self.expected().collect::<Vec<_>>()))
-                .with_color(Color::Red)
-        ]
-    }
-}
-
-impl CompilerError for ir::lower::Error {
-    fn span(&self) -> SimpleSpan {
-        self.label.as_ref().map(|x| x.0).unwrap_or(SimpleSpan::new(0, 0))
-    }
-    fn message(&self) -> String { self.message.clone() }
-    fn labels(self, filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
-        self.label.into_iter().map(|(span, message)| 
-            Label::new((filename, span.into_range()))
-                .with_message(message)
-                .with_color(Color::Red)
-        ).collect()
-    }
-}
-
-impl CompilerError for ir::typecheck::Error {
-    fn span(&self) -> SimpleSpan { SimpleSpan::splat(0) }
-    fn message(&self) -> String { self.0.clone() }
-    fn labels(self, _filename: &str) -> Vec<Label<(&str, Range<usize>)>> {
-        vec![]
-    }
-}
-
-fn show_errs(src: &str, filename: &str, errs: Vec<impl CompilerError>) {
-    let mut cache = (filename, src.into());
-
-    errs.into_iter()
-        .map(|e| e.map())
-        .for_each(|e| {
-            Report::build(ReportKind::Error, filename, e.span().start)
-                .with_message(e.message())
-                .with_labels(e.labels(filename))
-                .finish()
-                .eprint(&mut cache)
-                .unwrap()
-        });
-}
+mod error;
 
 fn main() {
     let input = r#"
@@ -116,7 +58,8 @@ void main() {
     i32 a = 0;
     bool b;
     i32 c = a + b;
-    i32& d = &a;
+    i32& d = &(&a);
+    *d = 10;
 }
     "#;
 

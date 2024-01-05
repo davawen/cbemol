@@ -136,12 +136,12 @@ impl Display for WithProgram<'_, Statement<'_>> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self.0 {
             Statement::Do(e) => writeln!(f, "DO {}", e.with(self.1)),
-            Statement::Assign(var, e) => writeln!(f, "{var:?} = {}", e.with(self.1)),
-            Statement::DerefAssign(var, e) => writeln!(f, "*{} = {}", var.with(self.1), e.with(self.1)),
-            Statement::Block(b) => writeln!(f, "{}", b.with(self.1)),
-            Statement::If { cond, block, else_block: Some(else_block) } => writeln!(f, "IF {} THEN {} ELSE {}", cond.with(self.1), block.with(self.1), else_block.with(self.1)),
-            Statement::If { cond, block, else_block: None } => writeln!(f, "IF {} THEN {}", cond.with(self.1), block.with(self.1)),
-            Statement::Loop(block) => writeln!(f, "LOOP {}", block.with(self.1))
+            Statement::Assign(var, e, _) => writeln!(f, "{var:?} = {}", e.with(self.1)),
+            Statement::DerefAssign(var, e, _) => writeln!(f, "*{} = {}", var.with(self.1), e.with(self.1)),
+            Statement::Block(b, _) => writeln!(f, "{}", b.with(self.1)),
+            Statement::If { cond, block, else_block: Some(else_block), span: _ } => writeln!(f, "IF {} THEN {} ELSE {}", cond.with(self.1), block.with(self.1), else_block.with(self.1)),
+            Statement::If { cond, block, else_block: None, span: _ } => writeln!(f, "IF {} THEN {}", cond.with(self.1), block.with(self.1)),
+            Statement::Loop(block, _) => writeln!(f, "LOOP {}", block.with(self.1))
         }
     }
 }
@@ -149,11 +149,11 @@ impl Display for WithProgram<'_, Statement<'_>> {
 impl Display for WithProgram<'_, Value> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
-            Value::Var(v) => write!(f, "{v:?}"),
-            Value::Num(n) => write!(f, "{n}"),
-            Value::Literal(l) => write!(f, "{:?}", self.1.literals[*l]),
-            Value::Uninit => write!(f, "---"),
-            Value::Unit => write!(f, "{{}}")
+            Value::Var(v, _) => write!(f, "{v:?}"),
+            Value::Num(n, _) => write!(f, "{n}"),
+            Value::Literal(l, _) => write!(f, "{:?}", self.1.literals[*l]),
+            Value::Uninit(_) => write!(f, "---"),
+            Value::Unit(_) => write!(f, "{{}}")
         }
     }
 }
@@ -162,23 +162,23 @@ impl Display for WithProgram<'_, Expr<'_>> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self.0 {
             Expr::Value(v) => write!(f, "{}", v.with(self.1)),
-            Expr::Break => write!(f, "break"),
-            Expr::Continue => write!(f, "continue"),
-            Expr::Return(e) => match e {
+            Expr::Break(_) => write!(f, "break"),
+            Expr::Continue(_) => write!(f, "continue"),
+            Expr::Return(e, _) => match e {
                 Some(e) => write!(f, "return with {}", e.with(self.1)),
                 None => write!(f, "return")
             }
-            Expr::FieldAccess(var, field) => write!(f, "{}.{field}", var.with(self.1)),
-            Expr::PathAccess(ty, field) => write!(f, "get constant {field} from {ty:?}"),
-            Expr::FuncCall(func, args) => {
+            Expr::FieldAccess(var, field, _) => write!(f, "{}.{field}", var.with(self.1)),
+            Expr::PathAccess(ty, field, _) => write!(f, "get constant {field} from {ty:?}"),
+            Expr::FuncCall(func, args, _) => {
                 write!(f, "call {func:?} with (")?;
                 for arg in args {
                     write!(f, "{}, ", arg.with(self.1))?;
                 }
                 write!(f, ")")
             }
-            Expr::UnaryOp(op, var) => write!(f, "{op} {}", var.with(self.1)),
-            Expr::BinOp(a, op, b) => write!(f, "{} {op} {}", a.with(self.1), b.with(self.1))
+            Expr::UnaryOp(op, var, _) => write!(f, "{op} {}", var.with(self.1)),
+            Expr::BinOp(a, op, b, _) => write!(f, "{} {op} {}", a.with(self.1), b.with(self.1))
         }
     }
 }

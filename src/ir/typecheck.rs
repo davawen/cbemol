@@ -1,16 +1,6 @@
+use crate::error::Error;
+
 use super::*;
-
-pub struct Error(pub String);
-
-impl Error {
-    fn new(msg: impl Into<String>) -> Self {
-        Error(msg.into())
-    }
-
-    fn errs<T>(self) -> Result<T> {
-        Err(vec![self])
-    }
-}
 
 type Result<T> = std::result::Result<T, Vec<Error>>;
 
@@ -61,7 +51,7 @@ impl<'a> Block<'a> {
         let mut errs = vec![];
         for stmt in &mut self.stmts {
             match stmt {
-                Statement::Assign(var, expr) => {
+                Statement::Assign(var, expr, span) => {
                     let expr = match expr.typecheck(state) {
                         Ok(expr) => expr,
                         Err(e) => {
@@ -74,15 +64,18 @@ impl<'a> Block<'a> {
                     if let Type::Undeclared = &var.ty {
                         var.ty = expr;
                     } else if !var.ty.same_as(&expr) {
-                        errs.push(Error::new(format!("expected type {}, found {}", var.ty, expr)));
+                        errs.push(Error::new(format!("expected type {}, found {}", var.ty, expr)).with_label(*span, "in assignment"));
                     }
                 }
-                Statement::DerefAssign(value, expr) => {
+                Statement::DerefAssign(value, expr, span) => {
                     let expr = expr.typecheck(state);
                     let value = value.typecheck(state);
                     match (expr, value) {
-                        (Ok(expr), Ok(value)) => if !expr.same_as(&value) {
-                            errs.push(Error::new(format!("expected type {value}, found {expr}")));
+                        (Ok(Type::Ptr(expr)), Ok(value)) => if !expr.same_as(&value) {
+                            errs.push(Error::new(format!("expected type {value}, found {expr}")).with_label(*span, "in assignment"));
+                        }
+                        (Ok(expr), Ok(_)) => {
+                            errs.push(Error::new(format!("expected a pointer to a type, got {expr}")).with_label(*span, "here"));
                         }
                         (expr, value) => {
                             if let Err(e) = expr  { errs.extend(e) }
@@ -93,11 +86,12 @@ impl<'a> Block<'a> {
                 Statement::Do(expr) => if let Err(e) = expr.typecheck(state) {
                     errs.extend(e);
                 },
-                Statement::Block(block) => errs.extend(block.typecheck(state)),
-                Statement::If { cond, block, else_block } => {
+                Statement::Block(block, _) => errs.extend(block.typecheck(state)),
+                Statement::If { cond, block, else_block, span: _ } => {
+                    let cond_span = cond.span();
                     match cond.typecheck(state) {
                         Ok(Type::Primitive(PrimitiveType::Bool)) => (),
-                        Ok(ty) => errs.push(Error::new(format!("expected a boolean in condition of if statement, got {ty}"))),
+                        Ok(ty) => errs.push(Error::new(format!("expected a boolean in condition of if statement, got {ty}")).with_label(cond_span, "in this condition")),
                         Err(e) => errs.extend(e)
                     }
                     errs.extend(block.typecheck(state));
@@ -105,7 +99,7 @@ impl<'a> Block<'a> {
                         errs.extend(else_block.typecheck(state));
                     }
                 },
-                Statement::Loop(block) => errs.extend(block.typecheck(state)),
+                Statement::Loop(block, _) => errs.extend(block.typecheck(state)),
             }
         }
         errs
@@ -116,48 +110,48 @@ impl<'a> Expr<'a> {
     fn typecheck<'b, 'c>(&'b mut self, state: &'c mut State<'a, 'b>) -> Result<Type> {
         let ty = match self {
             Expr::Value(v) => v.typecheck(state)?,
-            Expr::FieldAccess(value, field) => {
+            Expr::FieldAccess(value, field, span) => {
                 match value.typecheck(state)? {
                     Type::Direct(key) if matches!(state.types[key], DirectType::Struct { .. }) => {
                         let DirectType::Struct { fields } = &state.types[key] else { unreachable!() };
-                        if let Some((_, field)) = fields.iter().find(|(name, ty)| name == field) {
+                        if let Some((_, field)) = fields.iter().find(|(name, _ty)| name == field) {
                             field.clone()
                         } else {
-                            return Error::new(format!("field {field} does not exist on struct")).errs();
+                            return Error::new(format!("field {field} does not exist on struct")).with_label(*span, "here").errs();
                         }
                     }
-                    _ => return Error::new("accessing a field on a variable that is not a struct").errs()
+                    _ => return Error::new("accessing a field on a variable that is not a struct").with_label(*span, "here").errs()
                 }
             },
-            Expr::PathAccess(ty, _) => {
+            Expr::PathAccess(ty, _, _) => {
                 match &state.types[*ty] {
                     DirectType::Enum { .. } => Type::Primitive(PrimitiveType::I32),
                     _ => unreachable!("should be checked during lowering")
                 }
             },
-            Expr::FuncCall(key, args) => {
+            Expr::FuncCall(key, args, _) => {
                 let decl = &state.decls[*key];
                 if args.len() != decl.params.len() { unreachable!("should be checked during lowering") }
                 for (param, arg) in decl.params.iter().zip(args) {
-                    let arg = arg.typecheck(state)?;
-                    if !arg.same_as(&param.ty) {
-                        return Error::new(format!("wrong type in function call, expected {}, got {}", param.ty, arg)).errs()
+                    let arg_ty = arg.typecheck(state)?;
+                    if !arg_ty.same_as(&param.ty) {
+                        return Error::new(format!("wrong type in function call, expected {}, got {}", param.ty, arg_ty)).with_label(arg.span(), "this argument").errs()
                     }
                 }
                 decl.ret.clone()
             },
-            Expr::Return(value) => {
+            Expr::Return(value, span) => {
                 if let Some(value) = value {
                     let value = value.typecheck(state)?;
                     if !value.same_as(&state.decl.ret) {
-                        return Error::new(format!("wrong type returned from function, expected {}, got {}", state.decl.ret, value)).errs()
+                        return Error::new(format!("wrong type returned from function, expected {}, got {}", state.decl.ret, value)).with_label(*span, "in this return").errs()
                     }
                 }
                 Type::Never
             },
-            Expr::Break => Type::Never,
-            Expr::Continue => Type::Never,
-            Expr::BinOp(a, op, b) => {
+            Expr::Break(_) => Type::Never,
+            Expr::Continue(_) => Type::Never,
+            Expr::BinOp(a, op, b, span) => {
                 let a = a.typecheck(state)?;
                 let b = b.typecheck(state)?;
                 use BinOp as O;
@@ -166,55 +160,55 @@ impl<'a> Expr<'a> {
                         if (a.is_numeric() && b.is_numeric() && a.same_as(&b)) || (a.is_ptr() && b.is_numeric()) { a } 
                         else if a.is_numeric() && b.is_ptr() { b }
                         else {
-                            return Error::new(format!("cannot add/substract types {a} and {b}")).errs()
+                            return Error::new(format!("cannot add/substract types {a} and {b}")).with_label(*span, "in this operation").errs()
                         }
                     }
                     O::Mul | O::Div | O::Mod => {
                         if a.is_numeric() && b.is_numeric() && a.same_as(&b) { a } 
                         else {
-                            return Error::new(format!("cannot apply arithmetic operations on types {a} and {b}")).errs()
+                            return Error::new(format!("cannot apply arithmetic operations on types {a} and {b}")).with_label(*span, "in this operation").errs()
                         }
                     }
                     O::And | O::Or | O::Xor => {
                         if (a.is_numeric() && b.is_numeric() && a.same_as(&b)) || a.is_bool() && b.is_bool() { a }
                         else {
-                            return Error::new(format!("cannot apply binary operations on types {a} and {b}")).errs()
+                            return Error::new(format!("cannot apply binary operations on types {a} and {b}")).with_label(*span, "in this operation").errs()
                         }
                     }
                     O::LogicAnd | O::LogicOr | O::LogicXor => {
                         if a.is_bool() && b.is_bool() { a }
                         else {
-                            return Error::new("can only apply logical operations on boolean types").errs()
+                            return Error::new("can only apply logical operations on boolean types").with_label(*span, "in this operation").errs()
                         }
                     }
                     O::Eq | O::Ne | O::Gt | O::Lt | O::Ge | O::Le => {
                         if a.same_as(&b) { Type::Primitive(PrimitiveType::Bool) }
                         else {
-                            return Error::new("can only compare two types that are the same").errs()
+                            return Error::new("can only compare two types that are the same").with_label(*span, "in this operation").errs()
                         }
                     }
                 }
             },
-            Expr::UnaryOp(op, value) => {
+            Expr::UnaryOp(op, value, span) => {
                 let value = value.typecheck(state)?;
                 use UnaryOp as O;
                 match op {
                     O::Not => {
                         if value.is_bool() { value }
                         else {
-                            return Error::new("can only invert a boolean value").errs()
+                            return Error::new("can only invert a boolean value").with_label(*span, "here").errs()
                         }
                     }
                     O::Deref => {
                         match value {
                             Type::Ptr(value) => (*value).clone(),
-                            _ => return Error::new("can only dereference pointers").errs()
+                            _ => return Error::new("can only dereference pointers").with_label(*span, "here").errs()
                         }
                     }
                     O::Negate => {
                         if value.is_numeric() { value }
                         else {
-                            return Error::new("can only negate numbers").errs()
+                            return Error::new("can only negate numbers").with_label(*span, "here").errs()
                         }
                     }
                     O::AddressOf => {
@@ -230,14 +224,14 @@ impl<'a> Expr<'a> {
 impl Value {
     fn typecheck<'b>(&'b self, state: &mut State<'_, 'b>) -> Result<Type> {
         let ty = match self {
-            &Value::Var(v) => match state.vars[v].ty.clone() {
-                Type::Undeclared => return Error::new("cannot use variable whose type is undeclared").errs(),
+            &Value::Var(v, span) => match state.vars[v].ty.clone() {
+                Type::Undeclared => return Error::new("cannot use variable whose type is undeclared").with_label(span, "originated from here").errs(),
                 ty => ty
             },
-            Value::Num(_) => Type::Primitive(PrimitiveType::I32),
-            Value::Literal(_) => Type::Ptr(Box::new(Type::Primitive(PrimitiveType::U8))),
-            Value::Uninit => Type::Uninit,
-            Value::Unit => Type::Unit,
+            Value::Num(_, _) => Type::Primitive(PrimitiveType::I32),
+            Value::Literal(_, _) => Type::Ptr(Box::new(Type::Primitive(PrimitiveType::U8))),
+            Value::Uninit(_) => Type::Uninit,
+            Value::Unit(_) => Type::Unit,
         };
         Ok(ty)
     }
@@ -245,7 +239,7 @@ impl Value {
 
 impl Type {
     /// flattens Type::Direct's that point to DirectType::Type
-    fn flatten<'b>(self, types: &'b Types<'_>) -> Self {
+    fn flatten(self, types: &Types<'_>) -> Self {
         match self {
             Type::Direct(key) => if let DirectType::Type(ty) = &types[key] {
                 ty.clone().flatten(types)
@@ -261,7 +255,7 @@ impl Type {
         }
     }
 
-    fn is_numeric<'b>(&self) -> bool {
+    fn is_numeric(&self) -> bool {
         use PrimitiveType as P;
         match self {
             Type::Primitive(p) => matches!(p, P::U8 | P::I32 | P::F32),
@@ -269,7 +263,7 @@ impl Type {
         }
     }
 
-    fn is_ptr<'b>(&self) -> bool {
+    fn is_ptr(&self) -> bool {
         matches!(self, Type::Ptr(_))
     }
 

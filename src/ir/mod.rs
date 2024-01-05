@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use slotmap::{SlotMap, new_key_type, SecondaryMap};
 
+use crate::ast::Span;
+
 pub mod lower;
 pub mod display;
 pub mod typecheck;
@@ -99,44 +101,81 @@ struct Variable {
 #[derive(Debug)]
 enum Statement<'a> {
     /// Assigns the value of expr to a variable
-    Assign(Var, Expr<'a>),
+    Assign(Var, Expr<'a>, Span),
     /// Assigns the value of expr to the location in memory pointed to by a variable
-    DerefAssign(Value, Expr<'a>),
+    DerefAssign(Value, Expr<'a>, Span),
     Do(Expr<'a>),
-    Block(Block<'a>),
+    Block(Block<'a>, Span),
     If {
         cond: Expr<'a>,
         block: Block<'a>,
-        else_block: Option<Block<'a>>
+        else_block: Option<Block<'a>>,
+        span: Span
     },
-    Loop(Block<'a>)
+    Loop(Block<'a>, Span)
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Value {
-    Var(Var),
-    Num(i32),
-    Literal(LiteralKey),
-    Uninit,
-    Unit
+    Var(Var, Span),
+    Num(i32, Span),
+    Literal(LiteralKey, Span),
+    Uninit(Span),
+    Unit(Span)
 }
 
 #[derive(Debug)]
 enum Expr<'a> {
     Value(Value),
-    FieldAccess(Value, &'a str),
-    PathAccess(TypeKey, &'a str),
-    FuncCall(FuncKey, Vec<Value>),
-    Return(Option<Value>),
-    Break,
-    Continue,
-    BinOp(Value, BinOp, Value),
-    UnaryOp(UnaryOp, Value)
+    FieldAccess(Value, &'a str, Span),
+    PathAccess(TypeKey, &'a str, Span),
+    FuncCall(FuncKey, Vec<Value>, Span),
+    Return(Option<Value>, Span),
+    Break(Span),
+    Continue(Span),
+    BinOp(Value, BinOp, Value, Span),
+    UnaryOp(UnaryOp, Value, Span)
 }
 
-impl From<Value> for Expr<'_> {
-    fn from(value: Value) -> Self {
-        Expr::Value(value)
+impl Value {
+    fn expr(self) -> Expr<'static> {
+        Expr::Value(self)
+    }
+
+    fn span(&self) -> Span {
+        match *self {
+            Value::Var(_, span) => span,
+            Value::Num(_, span) => span,
+            Value::Literal(_, span) => span,
+            Value::Uninit(span) => span,
+            Value::Unit(span) => span,
+        }
+    }
+
+    fn with_span(self, span: Span) -> Self {
+        match self {
+            Value::Var(v, _) => Value::Var(v, span),
+            Value::Num(n, _) => Value::Num(n, span),
+            Value::Literal(l, _) => Value::Literal(l, span),
+            Value::Uninit(_) => Value::Uninit(span),
+            Value::Unit(_) => Value::Unit(span),
+        }
+    }
+}
+
+impl Expr<'_> {
+    fn span(&self) -> Span {
+        match self {
+            Expr::Value(value) => value.span(),
+            &Expr::FieldAccess(_, _, span) => span,
+            &Expr::PathAccess(_, _, span) => span,
+            &Expr::FuncCall(_, _, span) => span,
+            &Expr::Return(_, span) => span,
+            &Expr::Break(span) => span,
+            &Expr::Continue(span) => span,
+            &Expr::BinOp(_, _, _, span) => span,
+            &Expr::UnaryOp(_, _, span) => span,
+        }
     }
 }
 

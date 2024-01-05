@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::ast::{Ast, self, Span};
+use crate::{ast::{Ast, self, Span}, error::Error};
 
 use self::scope::Scopes;
 
@@ -8,26 +8,7 @@ use super::*;
 
 mod scope;
 
-pub struct Error {
-    pub message: String,
-    pub label: Option<(Span, String)>
-}
-
 pub type Result<T> = std::result::Result<T, Error>;
-
-impl Error {
-    fn new(message: impl ToString) -> Self {
-        Self {
-            message: message.to_string(),
-            label: None
-        }
-    }
-
-    fn with_label(mut self, span: Span, message: impl ToString) -> Self {
-        self.label = Some((span, message.to_string()));
-        self
-    }
-}
 
 impl<'a> Program<'a> {
     pub fn lower(program: &'a [Ast<'a>]) -> Result<Self> {
@@ -92,7 +73,7 @@ impl<'a> Program<'a> {
                         ret: self.parse_type(ret)?,
                         params: params.iter().map(|param| {
                             if let Some(value) = &param.value {
-                                Err(Error::new("default values are not supported yet").with_label(value.span(), "used here"))?
+                                return Error::new("default values are not supported yet").with_label(value.span(), "used here").err()
                             }
                             Ok(Param {
                                 name: param.name,
@@ -141,8 +122,9 @@ impl<'a> Program<'a> {
         }
 
         if let Some(expr) = &body.1 {
+            let span = expr.span();
             let tmp = self.parse_expr_into_value(expr, func, &mut env, scopes)?;
-            env.stmts.push(Statement::Do(Expr::Return(Some(tmp))));
+            env.stmts.push(Statement::Do(Expr::Return(Some(tmp), span)));
         }
 
         scopes.pop();
@@ -151,7 +133,7 @@ impl<'a> Program<'a> {
 
     fn parse_statement<'b>(&mut self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<()> {
         match node {
-            Ast::Declare { var, ty, value, span: _ } => {
+            Ast::Declare { var, ty, value, span } => {
                 // evaluate value before adding the variable to scope
                 let value = value.as_ref().map(|value| self.parse_expr(value, func, env, scopes));
 
@@ -160,7 +142,7 @@ impl<'a> Program<'a> {
                 scopes.add_var(var, key);
 
                 if let Some(value) = value {
-                    env.stmts.push(Statement::Assign(key, value?));
+                    env.stmts.push(Statement::Assign(key, value?, *span));
                 }
             }
             Ast::Assign { var, value, span } => {
@@ -170,50 +152,45 @@ impl<'a> Program<'a> {
                     ast::LValue::Id(name) => {
                         let var = scopes.var(name)
                             .ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "assigned to here"))?;
-                        Statement::Assign(var, value)
+                        Statement::Assign(var, value, *span)
                     }
-                    ast::LValue::Deref(expr) => Statement::DerefAssign(self.parse_expr_into_value(expr, func, env, scopes)?, value),
-                    ast::LValue::Index(_array, _index) => Err(Error::new("TODO: implement indexing").with_label(*span, "used here"))?
+                    ast::LValue::Deref(expr) => Statement::DerefAssign(self.parse_expr_into_value(expr, func, env, scopes)?, value, *span),
+                    ast::LValue::Index(_array, _index) => return Error::new("TODO: implement indexing").with_label(*span, "used here").err()
                 };
                 env.stmts.push(statement);
             }
-            Ast::Block(block, _span) => {
-                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(Statement::Do)))?;
-                env.stmts.push(Statement::Block(block));
+            Ast::Block(block, span) => {
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(|(expr, _)| Statement::Do(expr))))?;
+                env.stmts.push(Statement::Block(block, *span));
             }
-            Ast::IfExpr { cond, block, else_branch, span } => {
+            &Ast::IfExpr { ref cond, ref block, ref else_branch, span } => {
                 let cond = self.parse_expr(cond, func, env, scopes)?;
-                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(Statement::Do)))?;
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(|(expr, _)| Statement::Do(expr))))?;
                 let else_block = else_branch.as_ref().map(|branch| match &**branch {
                     Ast::IfExpr { .. } => {
                         let mut block = Block::default();
                         self.parse_statement(branch, func, &mut block, scopes)?;
                         Ok(block)
                     }
-                    Ast::Block(b, _) => self.parse_block(b, func, scopes, |expr| Ok(expr.map(Statement::Do))),
+                    Ast::Block(b, _) => self.parse_block(b, func, scopes, |expr| Ok(expr.map(|(expr, _)| Statement::Do(expr)))),
                     _ => unreachable!()
                 }).transpose()?;
 
-                env.stmts.push(Statement::If { cond, block, else_block })
+                env.stmts.push(Statement::If { cond, block, else_block, span })
             }
-            Ast::LoopExpr(block, _) => {
+            &Ast::LoopExpr(ref block, span) => {
                 scopes.push_loop(scope::LoopScope { output_var: None });
-                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(Statement::Do)))?;
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(|(expr, _)| Statement::Do(expr))))?;
                 scopes.pop_loop();
 
-                env.stmts.push(Statement::Loop(block))
+                env.stmts.push(Statement::Loop(block, span))
             }
-            Ast::ForExpr { span, .. } => Err(
+            Ast::ForExpr { span, .. } => return 
                 Error::new("TODO: for expressions require implementation of interfaces and iterators")
-                    .with_label(*span, "used here")
-            )?,
-            // Ast::IfExpr { cond, block, span } => todo!(),
-            // Ast::LoopExpr(_, _) => todo!(),
-            // Ast::ForExpr { decl, it, body, span } => todo!(),
-            Ast::FunctionDef { span, .. } | Ast::StructDef { span, .. } | Ast::EnumDef { span, .. } | Ast::UnionDef { span, .. } => Err(
+                    .with_label(*span, "used here").err(),
+            Ast::FunctionDef { span, .. } | Ast::StructDef { span, .. } | Ast::EnumDef { span, .. } | Ast::UnionDef { span, .. } => return 
                 Error::new("cannot define function or struct inside of body of another function")
-                    .with_label(*span, "defined here")
-            )?,
+                    .with_label(*span, "defined here").err(),
             node => {
                 let expr = self.parse_expr(node, func, env, scopes)?;
                 env.stmts.push(Statement::Do(expr));
@@ -228,7 +205,7 @@ impl<'a> Program<'a> {
             Ast::Id(..) | Ast::Num(..) | Ast::Literal(..) | Ast::Shorthand(..) | Ast::Uninit(..) => {
                 Expr::Value(self.parse_expr_into_value(node, func, env, scopes)?)
             }
-            Ast::UnaryExpr(op, expr, _) => {
+            &Ast::UnaryExpr(ref op, ref expr, span) => {
                 let expr = self.parse_expr_into_value(expr, func, env, scopes)?;
                 // pretty stupid but future unary operations might need desugaring
                 let op = match op {
@@ -237,12 +214,10 @@ impl<'a> Program<'a> {
                     ast::UnaryOp::Negate    => UnaryOp::Negate,
                     ast::UnaryOp::Not       => UnaryOp::Not
                 };
-                Expr::UnaryOp(op, expr)
+                Expr::UnaryOp(op, expr, span)
             }
-            Ast::BinExpr(a, op, b, span) => match op {
-                ast::BinOp::Range => Err(
-                    Error::new("TODO: range struct and range syntax").with_label(*span, "used here")
-                )?,
+            &Ast::BinExpr(ref a, ref op, ref b, span) => match op {
+                ast::BinOp::Range => return Error::new("TODO: range struct and range syntax").with_label(span, "used here").err(),
                 ast::BinOp::Pipe => {
                     let a = self.parse_expr_into_value(a, func, env, scopes)?;
                     scopes.push_shorthand(a);
@@ -270,47 +245,47 @@ impl<'a> Program<'a> {
                         Range,
                         Pipe
                     };
-                    Expr::BinOp(a, op, b)
+                    Expr::BinOp(a, op, b, span)
                 }
             },
-            Ast::Access(a, field, span) => {
-                if let Ast::Id(var, _) = &**a {
+            &Ast::Access(ref a, ref field, span) => {
+                if let Ast::Id(var, var_span) = &**a {
                     if let Some(var) = scopes.var(var) { // acessing local variable
-                        Expr::FieldAccess(Value::Var(var), field)
+                        Expr::FieldAccess(Value::Var(var, *var_span), field, span)
                     } else { // acessing type constant
-                        let ty = self.type_decls.get(var).copied().ok_or(Error::new(format!("variable/type not declared: {var}")).with_label(*span, "used here"))?;
+                        let ty = self.type_decls.get(var).copied().ok_or(Error::new(format!("variable/type not declared: {var}")).with_label(span, "used here"))?;
                         match &self.types[ty] {
                             DirectType::Enum { variants } => if !variants.iter().any(|(name, _)| name == field) {
-                                Err(Error::new(format!("enumeration does not contain member {field}")).with_label(*span, "accessed here"))?
+                                return Error::new(format!("enumeration does not contain member {field}")).with_label(span, "accessed here").err()
                             }
-                            _ => Err(Error::new(format!("cannot access member of type {var}")).with_label(*span, "accessed here"))?
+                            _ => return Error::new(format!("cannot access member of type {var}")).with_label(span, "accessed here").err()
                         }
-                        Expr::PathAccess(ty, field)
+                        Expr::PathAccess(ty, field, span)
                     }
                 } else {
                     let var = self.parse_expr_into_value(a, func, env, scopes)?;
-                    Expr::FieldAccess(var, field)
+                    Expr::FieldAccess(var, field, span)
                 }
             },
-            Ast::Block(block, span) => {
+            &Ast::Block(ref block, span) => {
                 // store bock return value
                 let v = func.variables.insert(Variable { ty: Type::Undeclared });
                 let block = self.parse_block(block, func, scopes, 
-                    |expr| Ok(expr.map(|expr| Statement::Assign(v, expr))
-                        .or(Some(Statement::Assign(v, Value::Unit.into())))
+                    |expr| Ok(expr.map(|(expr, span)| Statement::Assign(v, expr, span))
+                        .or(Some(Statement::Assign(v, Value::Unit(span).expr(), span)))
                     )
                 )?;
-                env.stmts.push(Statement::Block(block));
+                env.stmts.push(Statement::Block(block, span));
 
-                Value::Var(v).into()
+                Value::Var(v, span).expr()
             },
-            Ast::FuncCall { name, args, span } => {
+            &Ast::FuncCall { ref name, ref args, span } => {
                 // make sure args are processed in the same order they are specified
                 let mut args: VecDeque<_> = args.iter().map(|(name, expr, span)| Ok((name, self.parse_expr_into_value(expr, func, env, scopes)?, *span))).collect::<Result<_>>()?;
                 let mut ordered_args = Vec::new();
 
                 let key = *self.function_names.get(name).ok_or(
-                    Error::new(format!("unknown function {name}")).with_label(*span, "called here")
+                    Error::new(format!("unknown function {name}")).with_label(span, "called here")
                 )?;
                 let decl = &self.function_decls[key];
 
@@ -319,12 +294,12 @@ impl<'a> Program<'a> {
                 for param in &decl.params {
                     if let Some(outward_name) = &param.outward_name { // named parameter
                         let arg = args.iter().position(|(name, _, _)| **name == Some(outward_name)).ok_or(
-                            Error::new(format!("expected argument {outward_name} in function call")).with_label(*span, "called here")
+                            Error::new(format!("expected argument {outward_name} in function call")).with_label(span, "called here")
                         )?;
                         ordered_args.push(args.remove(arg).unwrap().1);
                     } else { // positional parameter
                         let arg = args.pop_front().ok_or(
-                            Error::new(format!("not enough arguments given, expected {}, got {num_args}", decl.params.len())).with_label(*span, "called here")
+                            Error::new(format!("not enough arguments given, expected {}, got {num_args}", decl.params.len())).with_label(span, "called here")
                         )?;
                         ordered_args.push(arg.1);
                     }
@@ -336,38 +311,38 @@ impl<'a> Program<'a> {
                 if !args.is_empty() {
                     for arg in &args {
                         if let Some(name) = arg.0 {
-                            Err(Error::new(format!("unknown named argument given: {name}"))
-                                .with_label(arg.2, "given here"))?
+                            return Error::new(format!("unknown named argument given: {name}"))
+                                .with_label(arg.2, "given here").err()
                         }
                     }
 
                     // remaining arguments are all positional
                     let span = args.iter().fold(args[0].2, |acc, (_, _, span)| Span::new(acc.start, span.end));
 
-                    Err(Error::new(format!("too many arguments given, expected {}, got {num_args}", decl.params.len()))
-                        .with_label(span, "given here"))?
+                    return Error::new(format!("too many arguments given, expected {}, got {num_args}", decl.params.len()))
+                        .with_label(span, "given here").err()
                 }
 
-                Expr::FuncCall(key, ordered_args)
+                Expr::FuncCall(key, ordered_args, span)
             },
-            Ast::IfExpr { cond, block, else_branch, span } => {
+            &Ast::IfExpr { ref cond, ref block, ref else_branch, span } => {
                 // store return value
                 let v = func.variables.insert(Variable { ty: Type::Undeclared });
 
-                let last_map = |expr: Option<Expr<'a>>| Ok(
-                    expr.map(|expr| Statement::Assign(v, expr))
-                        .or(Some(Statement::Assign(v, Value::Unit.into())))
+                let last_map = |expr: Option<(Expr<'a>, Span)>| Ok(
+                    expr.map(|(expr, span)| Statement::Assign(v, expr, span))
+                        .or(Some(Statement::Assign(v, Value::Unit(span).expr(), span)))
                 );
 
                 let cond = self.parse_expr(cond, func, env, scopes)?;
                 let block = self.parse_block(block, func, scopes, last_map)?;
                 let Some(branch) = else_branch else {
-                    Err(Error::new("no else branch after if expression")
-                        .with_label(Span::new(span.end - 1, span.end), "expected else branch here"))?
+                    return Error::new("no else branch after if expression")
+                        .with_label(Span::new(span.end - 1, span.end), "expected else branch here").err()
                 };
 
                 let else_block = match &**branch {
-                    Ast::IfExpr { .. } => {
+                    &Ast::IfExpr { span, .. } => {
                         // FIXME: This recursively parses else-ifs as expression,
                         // which leads to the creation of many unneeded temporaries
                         // (the result of every else-if can and should directly be stored in `v`).
@@ -375,68 +350,65 @@ impl<'a> Program<'a> {
                         // or by creating a special enum and function for parsing if blocks
                         let mut block = Block::default();
                         let ret = self.parse_expr(branch, func, &mut block, scopes)?;
-                        block.stmts.push(Statement::Assign(v, ret));
+                        block.stmts.push(Statement::Assign(v, ret, span));
                         block
                     }
                     Ast::Block(b, _) => self.parse_block(b, func, scopes, last_map)?,
                     _ => unreachable!()
                 };
-                env.stmts.push(Statement::If { cond, block, else_block: Some(else_block) });
-                Value::Var(v).into()
+                env.stmts.push(Statement::If { cond, block, else_block: Some(else_block), span });
+                Value::Var(v, span).expr()
             }
-            Ast::LoopExpr(block, span) => {
+            &Ast::LoopExpr(ref block, span) => {
                 // store return value
                 let v = func.variables.insert(Variable { ty: Type::Undeclared });
 
                 scopes.push_loop(scope::LoopScope { output_var: Some(v) });
-                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(|expr| Statement::Assign(v, expr))))?;
+                let block = self.parse_block(block, func, scopes, |expr| Ok(expr.map(|(expr, span)| Statement::Assign(v, expr, span))))?;
                 scopes.pop_loop();
 
-                env.stmts.push(Statement::Loop(block));
-                Value::Var(v).into()
+                env.stmts.push(Statement::Loop(block, span));
+                Value::Var(v, span).expr()
             }
-            Ast::Break(expr, span) => {
+            &Ast::Break(ref expr, span) => {
                 let expr = expr.as_ref().map(|expr| self.parse_expr(expr, func, env, scopes)).transpose()?;
                 let Some(current_loop) = scopes.current_loop() else {
-                    Err(Error::new("breaking when not inside of a loop")
-                        .with_label(*span, "break is here"))?
+                    return Error::new("breaking when not inside of a loop")
+                        .with_label(span, "break is here").err()
                 };
 
                 match (expr, current_loop.output_var) {
                     (None, None) | (None, Some(_)) => (),
-                    (Some(_), None) => Err(Error::new("breaking with a value, inside of a loop that doesn't return anything")
-                        .with_label(*span, "break is here"))?,
-                    (Some(expr), Some(var)) => env.stmts.push(Statement::Assign(var, expr))
+                    (Some(_), None) => return Error::new("breaking with a value, inside of a loop that doesn't return anything")
+                        .with_label(span, "break is here").err(),
+                    (Some(expr), Some(var)) => env.stmts.push(Statement::Assign(var, expr, span))
                 }
-                Expr::Break
+                Expr::Break(span)
             }
-            Ast::Continue(expr, span) => {
+            &Ast::Continue(ref expr, span) => {
                 let expr = expr.as_ref().map(|expr| self.parse_expr(expr, func, env, scopes)).transpose()?;
                 let Some(current_loop) = scopes.current_loop() else {
-                    Err(Error::new("continuing when not inside of a loop")
-                        .with_label(*span, "continue is here"))?
+                    return Error::new("continuing when not inside of a loop")
+                        .with_label(span, "continue is here").err()
                 };
 
                 match (expr, current_loop.output_var) {
                     (None, None) | (None, Some(_)) => (),
-                    (Some(_), None) => Err(Error::new("continuing with a value, inside of a loop that doesn't return anything")
-                        .with_label(*span, "continue is here"))?,
-                    (Some(expr), Some(var)) => env.stmts.push(Statement::Assign(var, expr))
+                    (Some(_), None) => return Error::new("continuing with a value, inside of a loop that doesn't return anything")
+                        .with_label(span, "continue is here").err(),
+                    (Some(expr), Some(var)) => env.stmts.push(Statement::Assign(var, expr, span))
                 }
-                Expr::Continue
+                Expr::Continue(span)
             }
-            Ast::ForExpr { span, .. } => Err(
+            Ast::ForExpr { span, .. } => return
                 Error::new("for loops cannot return values (as there is a possibility they might never enter the loop)")
-                    .with_label(*span, "used here")
-            )?,
-            Ast::Declare { span, .. } | Ast::Assign { span, .. } => Err(
+                    .with_label(*span, "used here").err(),
+            Ast::Declare { span, .. } | Ast::Assign { span, .. } => return 
                 Error::new("variable assignment and declaration does not yield a value and cannot be used as an expression")
-                    .with_label(*span, "used here as an expression")
-            )?,
-            Ast::FunctionDef { span, .. } | Ast::StructDef { span, .. } | Ast::EnumDef { span, .. } | Ast::UnionDef { span, .. } => Err(
+                    .with_label(*span, "used here as an expression").err(),
+            Ast::FunctionDef { span, .. } | Ast::StructDef { span, .. } | Ast::EnumDef { span, .. } | Ast::UnionDef { span, .. } => return 
                 Error::new("cannot define function or struct inside of body of another function")
-                    .with_label(*span, "defined here")
-            )?,
+                    .with_label(*span, "defined here").err(),
         };
 
         Ok(expr)
@@ -444,22 +416,22 @@ impl<'a> Program<'a> {
 
     fn parse_expr_into_value<'b>(&mut self, node: &'a Ast<'a>, func: &'b mut Function<'a>, env: &'b mut Block<'a>, scopes: &'b mut Scopes<'a>) -> Result<Value> {
         let value = match node {
-            Ast::Id(name, span) => Value::Var(scopes.var(name).ok_or(Error::new(format!("unknown variable {name}")).with_label(*span, "used here"))?),
-            &Ast::Num(num, _) => Value::Num(num),
-            Ast::Literal(str, _) => Value::Literal(self.literals.insert(str.clone())),
-            Ast::Shorthand(span) => {
+            &Ast::Id(name, span) => Value::Var(scopes.var(name).ok_or(Error::new(format!("unknown variable {name}")).with_label(span, "used here"))?, span),
+            &Ast::Num(num, span) => Value::Num(num, span),
+            &Ast::Literal(ref str, span) => Value::Literal(self.literals.insert(str.clone()), span),
+            &Ast::Shorthand(span) => {
                 scopes.shorthand().ok_or(
-                    Error::new("using a shorthand when not inside of a pipeline expression").with_label(*span, "appeared here")
-                )?
+                    Error::new("using a shorthand when not inside of a pipeline expression").with_label(span, "appeared here")
+                )?.with_span(span)
             }
-            Ast::Uninit(_) => Value::Uninit,
+            &Ast::Uninit(span) => Value::Uninit(span),
             node => {
                 let expr = self.parse_expr(node, func, env, scopes)?;
                 if let Expr::Value(value) = expr { return Ok(value) } // avoid unnecessary temporary
 
                 let var = func.variables.insert(Variable { ty: Type::Undeclared });
-                env.stmts.push(Statement::Assign(var, expr));
-                Value::Var(var)
+                env.stmts.push(Statement::Assign(var, expr, node.span()));
+                Value::Var(var, node.span())
             }
         };
         Ok(value)
@@ -474,7 +446,7 @@ impl<'a> Program<'a> {
         block: &'a ast::Block<'a>,
         func: &'b mut Function<'a>,
         scopes: &'b mut Scopes<'a>,
-        last_map: impl Fn(Option<Expr<'a>>) -> Result<Option<Statement<'a>>>
+        last_map: impl Fn(Option<(Expr<'a>, Span)>) -> Result<Option<Statement<'a>>>
     ) -> Result<Block<'a>> {
         scopes.push();
         let mut env = Block::default();
@@ -482,7 +454,10 @@ impl<'a> Program<'a> {
             self.parse_statement(statement, func, &mut env, scopes)?;
         }
 
-        let last_expr = block.1.as_ref().map(|expr| self.parse_expr(expr, func, &mut env, scopes)).transpose()?;
+        let last_expr = block.1.as_ref()
+            .map(|expr| Ok((self.parse_expr(expr, func, &mut env, scopes)?, expr.span())))
+            .transpose()?;
+
         if let Some(stmt) = last_map(last_expr)? {
             env.stmts.push(stmt);
         }
